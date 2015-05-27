@@ -14,6 +14,8 @@ import java.util.concurrent.Future;
 
 import javax.annotation.Resource;
 
+import alien4cloud.plugin.ManagedPlugin;
+import alien4cloud.plugin.PluginManager;
 import lombok.extern.slf4j.Slf4j;
 
 import org.apache.commons.lang3.StringUtils;
@@ -367,13 +369,19 @@ public class CloudService {
         alienDAO.save(cloud);
     }
 
+    @Resource
+    private PluginManager pluginManager;
+
     @SuppressWarnings({ "unchecked", "rawtypes" })
     private void initCloud(Cloud cloud) throws PluginConfigurationException {
         log.info("Enable cloud <{}> <{}>", cloud.getId(), cloud.getName());
 
         // get a PaaSProvider bean and configure it.
         IPaaSProviderFactory passProviderFactory = paaSProviderFactoriesService.getPluginBean(cloud.getPaasPluginId(), cloud.getPaasPluginBean());
-        // create and configure a IPaaSProvider instance.
+        ManagedPlugin plugin = pluginManager.getPluginContexts().get(cloud.getPaasPluginId());
+        ClassLoader alienClassLoader = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(plugin.getPluginContext().getClassLoader());
+        // create and configure a IPaaSProvider instance
         IPaaSProvider provider = null;
         if (passProviderFactory instanceof IConfigurablePaaSProviderFactory) {
             provider = ((IConfigurablePaaSProviderFactory<Object>) passProviderFactory).newInstance();
@@ -382,6 +390,9 @@ public class CloudService {
         }
         refreshCloud(cloud, provider);
         provider.init(deploymentService.getCloudActiveDeploymentContexts(cloud.getId()));
+
+        Thread.currentThread().setContextClassLoader(alienClassLoader);
+
         // register the IPaaSProvider for the cloud.
         paaSProviderService.register(cloud.getId(), provider);
     }

@@ -83,44 +83,45 @@ public class SecurityConfiguration extends WebSecurityConfigurerAdapter {
         http.exceptionHandling().accessDeniedHandler(accessDeniedHandler);
 
         http.authorizeRequests().antMatchers("/*").permitAll();
-        http.authorizeRequests().antMatchers("/rest/auth/**", "/rest/modules").permitAll();
-        http.authorizeRequests().antMatchers("/rest/quicksearch/**", "/rest/users/search/**", "/rest/users/getUsers/**").authenticated();
-        http.authorizeRequests().antMatchers("/rest/users/**").hasAuthority("ADMIN");
-        http.authorizeRequests().antMatchers("/rest/groups/search/**", "/rest/groups/getGroups/**").authenticated();
-        http.authorizeRequests().antMatchers("/rest/groups/**").hasAuthority("ADMIN");
-        http.authorizeRequests().antMatchers("/rest/topologies/**").authenticated();
-        http.authorizeRequests().antMatchers("/rest/templates/**").hasAnyAuthority("ADMIN", "ARCHITECT", "APPLICATIONS_MANAGER");
-        http.authorizeRequests().antMatchers("/rest/components/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "COMPONENTS_BROWSER");
-        http.authorizeRequests().antMatchers("/csarrepository/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "COMPONENTS_BROWSER");
-        http.authorizeRequests().antMatchers("/rest/applications/**").authenticated();
-        http.authorizeRequests().antMatchers("/rest/runtime/**").authenticated();
-        http.authorizeRequests().antMatchers("/rest/suggest/**").authenticated();
-        http.authorizeRequests().antMatchers("/rest/suggestions/toscaelement/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "COMPONENTS_BROWSER");
-        http.authorizeRequests().antMatchers(HttpMethod.POST, "/rest/csars").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "ARCHITECT");
-        http.authorizeRequests().antMatchers("/rest/csars/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER");
-        http.authorizeRequests().antMatchers("/rest/plugin/**").hasAuthority("ADMIN");
-        http.authorizeRequests().antMatchers("/rest/tagconfigurations/search/**").authenticated();
-        http.authorizeRequests().antMatchers("/rest/tagconfigurations/**").hasAuthority("ADMIN");
-
-        http.authorizeRequests().antMatchers("/rest/formdescriptor/nodetype/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "COMPONENTS_BROWSER");
-        http.authorizeRequests().antMatchers("/rest/formdescriptor/pluginConfig/**").hasAuthority("ADMIN");
-        http.authorizeRequests().antMatchers("/rest/formdescriptor/tagconfiguration/**").hasAuthority("ADMIN");
-        http.authorizeRequests().antMatchers("/rest/formdescriptor/cloudConfig/**").hasAuthority("ADMIN");
-
-        http.authorizeRequests().antMatchers("/rest/properties/**").hasAnyAuthority("ADMIN", "APPLICATIONS_MANAGER");
-        http.authorizeRequests().antMatchers("/rest/enums/**").authenticated();
-
-        http.authorizeRequests().antMatchers("/rest/deployments/**").authenticated();
-        http.authorizeRequests().antMatchers("/rest/clouds/search/**").authenticated();
-        http.authorizeRequests().antMatchers(HttpMethod.GET, "/rest/clouds/{id}").authenticated();
-        http.authorizeRequests().antMatchers("/rest/clouds/*/deploymentpropertydefinitions").authenticated();
-        http.authorizeRequests().antMatchers("/rest/clouds/**").hasAuthority("ADMIN");
-        http.authorizeRequests().antMatchers("/rest/cloud-images/**").hasAuthority("ADMIN");
-        http.authorizeRequests().antMatchers("/rest/alienEndPoint/**").authenticated();
-        http.authorizeRequests().antMatchers("/rest/passprovider").hasAuthority("ADMIN");
-        http.authorizeRequests().antMatchers("/rest/admin/**").hasAuthority("ADMIN");
-        http.authorizeRequests().antMatchers("/rest/audit/**").hasAuthority("ADMIN");
-        http.authorizeRequests().anyRequest().denyAll();
+        http.authorizeRequests().antMatchers("/**").permitAll();
+//        http.authorizeRequests().antMatchers("/rest/auth/**", "/rest/modules").permitAll();
+//        http.authorizeRequests().antMatchers("/rest/quicksearch/**", "/rest/users/search/**", "/rest/users/getUsers/**").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/users/**").hasAuthority("ADMIN");
+//        http.authorizeRequests().antMatchers("/rest/groups/search/**", "/rest/groups/getGroups/**").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/groups/**").hasAuthority("ADMIN");
+//        http.authorizeRequests().antMatchers("/rest/topologies/**").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/templates/**").hasAnyAuthority("ADMIN", "ARCHITECT", "APPLICATIONS_MANAGER");
+//        http.authorizeRequests().antMatchers("/rest/components/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "COMPONENTS_BROWSER");
+//        http.authorizeRequests().antMatchers("/csarrepository/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "COMPONENTS_BROWSER");
+//        http.authorizeRequests().antMatchers("/rest/applications/**").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/runtime/**").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/suggest/**").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/suggestions/toscaelement/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "COMPONENTS_BROWSER");
+//        http.authorizeRequests().antMatchers(HttpMethod.POST, "/rest/csars").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "ARCHITECT");
+//        http.authorizeRequests().antMatchers("/rest/csars/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER");
+//        http.authorizeRequests().antMatchers("/rest/plugin/**").hasAuthority("ADMIN");
+//        http.authorizeRequests().antMatchers("/rest/tagconfigurations/search/**").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/tagconfigurations/**").hasAuthority("ADMIN");
+//
+//        http.authorizeRequests().antMatchers("/rest/formdescriptor/nodetype/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "COMPONENTS_BROWSER");
+//        http.authorizeRequests().antMatchers("/rest/formdescriptor/pluginConfig/**").hasAuthority("ADMIN");
+//        http.authorizeRequests().antMatchers("/rest/formdescriptor/tagconfiguration/**").hasAuthority("ADMIN");
+//        http.authorizeRequests().antMatchers("/rest/formdescriptor/cloudConfig/**").hasAuthority("ADMIN");
+//
+//        http.authorizeRequests().antMatchers("/rest/properties/**").hasAnyAuthority("ADMIN", "APPLICATIONS_MANAGER");
+//        http.authorizeRequests().antMatchers("/rest/enums/**").authenticated();
+//
+//        http.authorizeRequests().antMatchers("/rest/deployments/**").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/clouds/search/**").authenticated();
+//        http.authorizeRequests().antMatchers(HttpMethod.GET, "/rest/clouds/{id}").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/clouds/*/deploymentpropertydefinitions").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/clouds/**").hasAuthority("ADMIN");
+//        http.authorizeRequests().antMatchers("/rest/cloud-images/**").hasAuthority("ADMIN");
+//        http.authorizeRequests().antMatchers("/rest/alienEndPoint/**").authenticated();
+//        http.authorizeRequests().antMatchers("/rest/passprovider").hasAuthority("ADMIN");
+//        http.authorizeRequests().antMatchers("/rest/admin/**").hasAuthority("ADMIN");
+//        http.authorizeRequests().antMatchers("/rest/audit/**").hasAuthority("ADMIN");
+//        http.authorizeRequests().anyRequest().denyAll();
 
         http.formLogin().defaultSuccessUrl("/rest/auth/status").failureUrl("/rest/auth/authenticationfailed").loginProcessingUrl("/login")
                 .usernameParameter("username").passwordParameter("password").permitAll().and().logout().logoutSuccessUrl("/").deleteCookies("JSESSIONID");

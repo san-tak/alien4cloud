@@ -13,4 +13,5 @@ public class ManagedPlugin {
     private AnnotationConfigApplicationContext pluginContext;
     private PluginDescriptor descriptor;
     private Path pluginPath;
+
 }
