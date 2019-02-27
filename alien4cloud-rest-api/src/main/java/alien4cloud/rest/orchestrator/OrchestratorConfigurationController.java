@@ -4,15 +4,9 @@ import java.io.IOException;
 
 import javax.inject.Inject;
 
-import lombok.extern.slf4j.Slf4j;
-
 import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import alien4cloud.audit.annotation.Audit;
 import alien4cloud.model.orchestrators.OrchestratorConfiguration;
@@ -22,11 +16,11 @@ import alien4cloud.rest.model.RestErrorBuilder;
 import alien4cloud.rest.model.RestErrorCode;
 import alien4cloud.rest.model.RestResponse;
 import alien4cloud.rest.model.RestResponseBuilder;
-
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
 import io.swagger.annotations.Authorization;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @RestController
@@ -53,8 +47,7 @@ public class OrchestratorConfigurationController {
             @ApiParam(value = "Id of the orchestrator for which to update the configuration.", required = true) @PathVariable String id,
             @ApiParam(value = "The configuration object for the orchestrator - Type depends of the selected orchestrator.", required = true) @RequestBody Object configuration) {
         try {
-            Object configurationObject = orchestratorConfigurationService.configurationAsValidObject(id, configuration);
-            orchestratorConfigurationService.updateConfiguration(id, configurationObject);
+            orchestratorConfigurationService.updateConfiguration(id, configuration);
         } catch (IOException e) {
             log.error("Failed to update cloud configuration. Specified json cannot be processed.", e);
             return RestResponseBuilder.<Void> builder().error(

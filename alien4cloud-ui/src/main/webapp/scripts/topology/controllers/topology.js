@@ -8,15 +8,14 @@ define(function (require) {
 
   require('d3');
   require('toaster');
-  require('bower_components/jquery-ui/ui/resizable');
 
   require('scripts/common/directives/drag_drop');
   require('scripts/common/directives/property_display');
+  require('scripts/common/directives/secret_display');
   require('scripts/common/directives/simple_modal');
   require('scripts/components/services/component_services');
   require('scripts/tosca/services/tosca_service');
   require('scripts/tosca/services/node_template_service');
-  require('scripts/tosca/services/tosca_cardinalities_service');
 
   require('scripts/topology/controllers/topology_editor_artifacts');
   require('scripts/topology/controllers/topology_editor_display');
@@ -25,24 +24,23 @@ define(function (require) {
   require('scripts/topology/controllers/topology_editor_nodes');
   require('scripts/topology/controllers/topology_editor_nodesswap');
   require('scripts/topology/controllers/topology_editor_outputs');
+  require('scripts/topology/controllers/topology_editor_policies');
   require('scripts/topology/controllers/topology_editor_properties');
+  require('scripts/topology/controllers/topology_editor_secrets');
   require('scripts/topology/controllers/topology_editor_relationships');
   require('scripts/topology/controllers/topology_editor_substitution');
-  require('scripts/topology/controllers/topology_editor_versions');
-  require('scripts/topology/controllers/topology_editor_workflows');
-  require('scripts/topology/controllers/topology_editor_yaml');
+  require('scripts/topology/controllers/topology_editor_dependencies');
 
   require('scripts/topology/controllers/search_relationship');
-  require('scripts/topology/services/topology_json_processor');
-  require('scripts/topology/services/topology_services');
-  require('scripts/topology/directives/workflow_rendering');
-  require('scripts/topology/directives/topology_rendering');
-  require('scripts/topology/controllers/workflow_operation_selector');
-  require('scripts/topology/controllers/workflow_state_selector');
-  require('scripts/topology/services/workflow_services');
+
+  require('scripts/topology/services/topology_editor_events_services');
+
+  require('scripts/common/controllers/confirm_modal');
 
   modules.get('a4c-topology-editor', ['a4c-common', 'ui.bootstrap', 'a4c-tosca', 'a4c-styles']).controller('TopologyCtrl',
-    ['$scope', '$modal', '$timeout', 'topologyJsonProcessor', 'topologyServices', 'componentService', 'nodeTemplateService', 'appVersions', 'context', 'toscaService', 'toscaCardinalitiesService', 'workflowServices',
+    ['$scope', '$uibModal', '$timeout', 'componentService', 'nodeTemplateService', 'toscaService','hotkeys', '$translate',
+    'defaultFilters',
+    'badges',
     'topoEditArtifacts',
     'topoEditDisplay',
     'topoEditGroups',
@@ -50,13 +48,15 @@ define(function (require) {
     'topoEditNodes',
     'topoEditNodesSwap',
     'topoEditOutputs',
+    'topoEditPolicies',
     'topoEditProperties',
+    'topoEditSecrets',
     'topoEditRelationships',
     'topoEditSubstitution',
-    'topoEditVersions',
-    'topoEditWf',
-    'topoEditYaml',
-    function($scope, $modal, $timeout, topologyJsonProcessor, topologyServices, componentService, nodeTemplateService, appVersions, context, toscaService, toscaCardinalitiesService, workflowServices,
+    'topoEditDependencies',
+    function($scope, $uibModal, $timeout, componentService, nodeTemplateService, toscaService, hotkeys, $translate,
+    defaultFilters,
+    badges,
     topoEditArtifacts,
     topoEditDisplay,
     topoEditGroups,
@@ -64,56 +64,74 @@ define(function (require) {
     topoEditNodes,
     topoEditNodesSwap,
     topoEditOutputs,
+    topoEditPolicies,
     topoEditProperties,
+    topoEditSecrets,
     topoEditRelationships,
     topoEditSubstitution,
-    topoEditVersions,
-    topoEditWf,
-    topoEditYaml) {
+    topoEditDependencies) {
+      $scope.defaultFilters = defaultFilters;
+      $scope.badges = badges;
       $scope.isRuntime = false;
-      // wire version context and versions to the scope
-      $scope.versionContext = context;
-      $scope.appVersions = appVersions.data;
 
+      $scope.isNodeTemplateCollapsed = false;
+      $scope.isPropertiesCollapsed = false;
+      $scope.isRelationshipsCollapsed = false;
+      $scope.isRelationshipCollapsed = false;
+      $scope.isArtifactsCollapsed = false;
+      $scope.isArtifactCollapsed = false;
+      $scope.isRequirementsCollapsed = false;
+      $scope.isCapabilitiesCollapsed = false;
+      $scope.displays = {
+        catalog: { active: true, size: 500, selector: '#catalog-box', only: ['catalog'] },
+        dependencies: { active: false, size: 400, selector: '#dependencies-box', only: ['dependencies'] },
+        inputs: { active: false, size: 400, selector: '#inputs-box', only: ['inputs'], keep: ['nodetemplate'] },
+        policies: { active: false, size: 400, selector: '#policies-box', only: ['policies'], keep: ['policiescatalog']},
+        policiescatalog: { active: false, size: 500, selector: '#policiescatalog-box', only: ['policiescatalog'], keep: ['policies']},
+        groups: { active: false, size: 400, selector: '#groups-box', only: ['groups'], keep: ['nodetemplate'] },
+        substitutions: { active: false, size: 400, selector: '#substitutions-box', only: ['substitutions'], keep: ['nodetemplate'] },
+        nodetemplate: { active: false, size: 550, selector: '#nodetemplate-box', only: ['nodetemplate'], keep: ['inputs'] }
+      };
+
+      topoEditDisplay($scope, '#topology-editor');
       topoEditArtifacts($scope);
-      topoEditDisplay($scope);
       topoEditGroups($scope);
       topoEditInputs($scope);
       topoEditNodes($scope);
       topoEditNodesSwap($scope);
       topoEditOutputs($scope);
+      topoEditPolicies($scope);
       topoEditProperties($scope);
+      topoEditSecrets($scope);
       topoEditRelationships($scope);
       topoEditSubstitution($scope);
-      topoEditVersions($scope);
-      topoEditWf($scope);
-      topoEditYaml($scope);
+      topoEditDependencies($scope);
 
-      $scope.workflows.setCurrentWorkflowName('install');
-
-      $scope.refreshTopology = function(topologyDTO, selectedNodeTemplate) {
-        for (var nodeId in topologyDTO.topology.nodeTemplates) {
-          if (topologyDTO.topology.nodeTemplates.hasOwnProperty(nodeId)) {
-            topologyDTO.topology.nodeTemplates[nodeId].name = nodeId;
-          }
+      $scope.initializeWorkspacesFilters = function () {
+        // if there is workspaces in the scope application add them to the scope
+        if(_.defined($scope.workspaces) && $scope.workspaces.length > 0) {
+          $scope.staticFacets = {workspace: []};
+          _.each($scope.workspaces, function(workspace) {
+            $scope.staticFacets.workspace.push({facetValue: workspace, count: ''});
+          });
+          $scope.staticFacets.workspace[0].staticFilter = $scope.workspaces;
+          $scope.defaultFilters.workspace =  $scope.workspaces;
         }
-        $scope.topology = topologyDTO;
-        $scope.isTopologyTemplate = ($scope.topology.topology.delegateType === 'topologytemplate');
+      };
 
-        // enrich objects to add maps for the fields that are currently mapped as array of map entries.
-        topologyJsonProcessor.process($scope.topology);
+      var refresh = function(selectedNodeTemplateName) {
 
-        fillBounds($scope.topology.topology);
+        $scope.initializeWorkspacesFilters();
+
+        if(_.undefined($scope.groupCollapsed)) { // we perform this only at init time.
+          $scope.groupCollapsed = {};
+          _.each($scope.topology.topology.groups, function(value, key) {
+            $scope.groupCollapsed[key] = { main: false, members: true, policies: true };
+          });
+        }
+
         $scope.outputs.init($scope.topology.topology);
-        var topologyInputs = $scope.topology.topology.inputs;
-        if (_.defined(topologyInputs)) {
-          for (var inputId in topologyInputs) {
-            if (topologyInputs.hasOwnProperty(inputId)) {
-              topologyInputs[inputId].inputId = inputId;
-            }
-          }
-        }
-        $scope.yaml.update($scope.topology.yaml);
+        // TODO trigger yaml update ?
 
         function reselectNodeTemplate(name) {
           $scope.selectedNodeTemplate = $scope.topology.topology.nodeTemplates[name];
@@ -125,8 +143,8 @@ define(function (require) {
           }
         }
 
-        if(_.defined(selectedNodeTemplate)) {
-          reselectNodeTemplate(selectedNodeTemplate);
+        if(_.defined(selectedNodeTemplateName)) {
+          reselectNodeTemplate(selectedNodeTemplateName);
         } else if(_.defined($scope.selectedNodeTemplate)) {
           reselectNodeTemplate($scope.selectedNodeTemplate.name);
         } else {
@@ -145,74 +163,19 @@ define(function (require) {
         $scope.substitution.refresh();
       };
 
-      // Topology can comes from application OR topology template
-      topologyServices.dao.get({
-        topologyId: $scope.topologyId
-      }, function(successResult) {
-        $scope.refreshTopology(successResult.data);
-        // init the group collapse indicators
-        $scope.groupCollapsed = {};
-        angular.forEach($scope.topology.topology.groups, function(value, key) {
-          $scope.groupCollapsed[key] = { main: false, members: true, policies: true };
-        });
-
+      $scope.$on('topologyRefreshedEvent', function(event, param) {
+        var selectedNodeTemplateName = param.selectedNodeTemplateName;
+        refresh(selectedNodeTemplateName);
       });
+
+      if(_.defined($scope.topology)) {
+        refresh();
+      }
 
       $scope.checkMapSize = function(map) {
         return angular.isDefined(map) && map !== null && Object.keys(map).length > 0;
       };
 
-      $scope.nodeNameObj = {}; // added to support <tabset> "childscope issue"
-      function fillNodeSelectionVars(nodeTemplate) {
-        $scope.selectedNodeTemplate = nodeTemplate;
-        $scope.nodeNameObj.val = nodeTemplate.name;
-        $scope.selectionabstract = $scope.topology.nodeTypes[nodeTemplate.type].abstract;
-      }
-
-      $scope.updateInputArtifactList = function(artifactName) {
-        var nodeTemplateName = $scope.selectedNodeTemplate.name;
-        var topology = $scope.topology.topology;
-        var inputIndex = topology.inputArtifacts[nodeTemplateName].indexOf(artifactName);
-        var artifactInput = {
-          topologyId: $scope.topology.topology.id,
-          nodeTemplateName: nodeTemplateName,
-          artifactName: artifactName
-        };
-
-        if (inputIndex < 0) {
-          // add input artifact
-          topologyServices.nodeTemplate.artifactInput.add(
-            artifactInput,
-            function(successResult) {
-              if (!successResult.error) {
-                $scope.refreshTopology(successResult.data);
-              }
-            },
-            function(errorResult) {
-              console.debug(errorResult);
-            }
-          );
-        } else {
-          // remove input artifact
-          topologyServices.nodeTemplate.artifactInput.remove(
-            artifactInput,
-            function(successResult) {
-              if (!successResult.error) {
-                $scope.refreshTopology(successResult.data);
-              } else {
-                console.debug(successResult.error);
-              }
-            },
-            function(errorResult) {
-              console.debug(errorResult);
-            }
-          );
-        }
-
-      };
-
-      $scope.getIcon = toscaService.getIcon;
-      $scope.getShortName = toscaService.simpleName;
       // check if compute type
       $scope.isComputeType = function(nodeTemplate) {
         if (_.undefined($scope.topology) || _.undefined(nodeTemplate)) {
@@ -220,18 +183,35 @@ define(function (require) {
         }
         return toscaService.isComputeType(nodeTemplate.type, $scope.topology.nodeTypes);
       };
-
-      var fillBounds = function(topology) {
-        if (!topology.nodeTemplates) {
-          return;
+      $scope.isDockerType = function(nodeTemplate) {
+        if (_.undefined($scope.topology) || _.undefined(nodeTemplate)) {
+          return false;
         }
-        Object.keys(topology.nodeTemplates).forEach(function(nodeTemplateName) {
-          var nodeTemplate = topology.nodeTemplates[nodeTemplateName];
-          toscaCardinalitiesService.fillRequirementBounds($scope.topology.nodeTypes, nodeTemplate);
-          toscaCardinalitiesService.fillCapabilityBounds($scope.topology.nodeTypes, $scope.topology.topology.nodeTemplates, nodeTemplate);
-        });
+        return toscaService.isDockerType(nodeTemplate.type, $scope.topology.nodeTypes);
       };
 
+      $scope.nodeNameObj = {}; // added to support <tabset> "childscope issue"
+      function fillNodeSelectionVars(nodeTemplate) {
+        $scope.selectedNodeTemplate = nodeTemplate;
+        $scope.nodeNameObj.val = nodeTemplate.name;
+        if($scope.isDockerType(nodeTemplate)) {
+          $scope.dockerImage = { defined: false };
+          $scope.dockerImage.value = undefined;
+          var nodeType = $scope.topology.nodeTypes[nodeTemplate.type];
+          $scope.dockerImage.typeValue = _.get(nodeType, 'interfaces.["tosca.interfaces.node.lifecycle.Standard"].operations.create.implementationArtifact.artifactRef');
+          var templateDockerImage = _.get(nodeTemplate, 'interfaces.["tosca.interfaces.node.lifecycle.Standard"].operations.create.implementationArtifact.artifactRef');
+          if(_.defined(templateDockerImage)) {
+            $scope.dockerImage.value = templateDockerImage;
+          } else if(_.defined($scope.dockerImage.typeValue)) {
+            $scope.dockerImage.value = $scope.dockerImage.typeValue;
+          }
+          $scope.dockerImage.defined = _.defined($scope.dockerImage.value);
+        }
+        $scope.selectionabstract = $scope.topology.nodeTypes[nodeTemplate.type].abstract;
+      }
+
+      $scope.getIcon = toscaService.getIcon;
+      $scope.getTag = toscaService.getTag;
 
       /**
        * Capabilities and Requirements docs
@@ -248,20 +228,19 @@ define(function (require) {
           componentId: componentId
         }, function(successResult) {
           if (successResult.error === null) {
-            if (successResult.data !== null) {
-              return successResult.data.description;
-            }
+            return successResult.data;
           }
         });
       };
 
-      $scope.editorCallback = {
-        autoOpenRelationshipModal: $scope.relationships.autoOpenRelationshipModal,
+      // Object in which the topology svg directive will inject control ops.
+      $scope.graphControl = {};
 
+      $scope.editorCallback = {
         addRelationship: function(sourceId, requirementName, requirementType, targetId, capabilityName, relationship) {
           if(_.defined(relationship)) {
             // generate relationship name
-            var name = toscaService.generateRelationshipName(relationship.elementId, targetId);
+            var name = toscaService.generateRelationshipName(relationship.elementId, targetId, capabilityName);
             // add the relationship
             $scope.relationships.doAddRelationship(sourceId, {
               name: name,
@@ -275,7 +254,7 @@ define(function (require) {
           }
         },
         selectNodeTemplate: function(newSelectedName) {
-          $scope.display.set('component', true);
+          $scope.display.set('nodetemplate', true);
           if (_.defined($scope.selectedNodeTemplate)) {
             var oldSelected = $scope.topology.topology.nodeTemplates[$scope.selectedNodeTemplate.name];
             if (oldSelected) {
@@ -287,10 +266,64 @@ define(function (require) {
           newSelected.selected = true;
 
           fillNodeSelectionVars(newSelected);
-          $scope.triggerTopologyRefresh = {};
+          $scope.$broadcast('editorSelectionChangedEvent', { nodeNames: [ newSelectedName ] });
           $scope.$digest();
+        },
+        updateNodePosition: function(name, x, y) {
+          $scope.nodes.updatePosition(name, x, y);
         }
       };
+
+      // key binding
+      function duplicateNode(node){
+        if(_.defined(node)){
+          $scope.nodes.duplicate(node.name);
+        }
+      }
+      function deleteNode(node) {
+        if(_.defined(node)){
+          var modalInstance = $uibModal.open({
+            templateUrl: 'views/common/confirm_modal.html',
+            controller: 'ConfirmModalCtrl',
+            resolve: {
+              title: function() {
+                return 'DELETE';
+              },
+              content: function() {
+                return $translate('DELETE_CONFIRM');
+              }
+            }
+          });
+          modalInstance.result.then(function () {
+            $scope.nodes.delete(node.name);
+          });
+        }
+      }
+      hotkeys.bindTo($scope)
+        .add ({
+          combo: 'mod+d',
+          description: 'Duplicate the selected node template with his hostedOn hierarchy.',
+          callback: function(e) {
+            duplicateNode($scope.selectedNodeTemplate);
+            if(e.preventDefault) {
+              e.preventDefault();
+            } else {
+              e.returnValue = false;
+            }
+          }
+        })
+        .add ({
+          combo: 'del',
+          description: 'Delete the selected node template.',
+          callback: function(e) {
+            deleteNode($scope.selectedNodeTemplate);
+            if(e.preventDefault) {
+              e.preventDefault();
+            } else {
+              e.returnValue = false;
+            }
+          }
+        });
     }
   ]);
 }); // define

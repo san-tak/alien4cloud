@@ -3,16 +3,22 @@ package alien4cloud.orchestrators.services;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executors;
 
 import javax.annotation.Resource;
 import javax.inject.Inject;
 
-import org.elasticsearch.mapping.QueryHelper;
+import alien4cloud.paas.IPaaSProviderConfiguration;
+import org.alien4cloud.tosca.model.CSARDependency;
 import org.springframework.stereotype.Component;
 
 import com.google.common.collect.Lists;
-import com.google.common.util.concurrent.*;
+import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.common.util.concurrent.MoreExecutors;
 
 import alien4cloud.dao.IGenericSearchDAO;
 import alien4cloud.dao.model.GetMultipleDataResult;
@@ -39,8 +45,6 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Component
 public class OrchestratorStateService {
-    @Inject
-    private QueryHelper queryHelper;
     @Resource(name = "alien-es-dao")
     private IGenericSearchDAO alienDAO;
     @Inject
@@ -169,32 +173,52 @@ public class OrchestratorStateService {
         orchestrator.setState(OrchestratorState.CONNECTING);
         alienDAO.save(orchestrator);
 
-        // TODO move below in a thread to perform plugin loading and connection asynchronously
-        IOrchestratorPluginFactory orchestratorFactory = orchestratorService.getPluginFactory(orchestrator);
-        IOrchestratorPlugin<Object> orchestratorInstance = orchestratorFactory.newInstance();
-        // index the archive in alien catalog
-        archiveIndexer.indexOrchestratorArchives(orchestratorFactory, orchestratorInstance);
         // Set the configuration for the provider
         OrchestratorConfiguration orchestratorConfiguration = orchestratorConfigurationService.getConfigurationOrFail(orchestrator.getId());
         try {
             Object configuration = orchestratorConfigurationService.configurationAsValidObject(orchestrator.getId(),
                     orchestratorConfiguration.getConfiguration());
-            orchestratorInstance.setConfiguration(configuration);
+
+            if (configuration instanceof IPaaSProviderConfiguration) {
+                ((IPaaSProviderConfiguration)configuration).setOrchestratorName(orchestrator.getName());
+                ((IPaaSProviderConfiguration)configuration).setOrchestratorId(orchestrator.getId());
+            }
+
+            IOrchestratorPluginFactory orchestratorFactory = orchestratorService.getPluginFactory(orchestrator);
+            IOrchestratorPlugin<Object> orchestratorInstance = orchestratorFactory.newInstance(configuration);
+            // just kept for backward compatibility
+            orchestratorInstance.setConfiguration(orchestrator.getId(), configuration);
+
+            // index the archive in alien catalog
+            archiveIndexer.indexOrchestratorArchives(orchestratorFactory, orchestratorInstance);
+            // connect the orchestrator
+            orchestratorInstance.init(deploymentService.getCloudActiveDeploymentContexts(orchestrator.getId()));
+
+            // register the orchestrator instance to be polled for updates
+            orchestratorPluginService.register(orchestrator.getId(), orchestratorInstance);
+            orchestrator.setState(OrchestratorState.CONNECTED);
+            alienDAO.save(orchestrator);
+            if (orchestratorInstance instanceof ILocationAutoConfigurer) {
+                // trigger locations auto-configurations
+                locationService.autoConfigure(orchestrator, (ILocationAutoConfigurer) orchestratorInstance);
+            }
+            indexLocationsArchives(orchestrator);
+
         } catch (IOException e) {
+            // TODO: change orchestrator state ?
             throw new PluginConfigurationException("Failed convert configuration json in object.", e);
         }
 
-        // connect the orchestrator
-        orchestratorInstance.init(deploymentService.getCloudActiveDeploymentContexts(orchestrator.getId()));
+        // TODO move below in a thread to perform plugin loading and connection asynchronously
 
-        // register the orchestrator instance to be polled for updates
-        orchestratorPluginService.register(orchestrator.getId(), orchestratorInstance);
-        orchestrator.setState(OrchestratorState.CONNECTED);
-        alienDAO.save(orchestrator);
-        if (orchestratorInstance instanceof ILocationAutoConfigurer) {
-            // trigger locations auto-configurations
-            locationService.autoConfigure(orchestrator, (ILocationAutoConfigurer) orchestratorInstance);
-        }
+    }
+
+    private void indexLocationsArchives(Orchestrator orchestrator) {
+        locationService.getAll(orchestrator.getId()).forEach(location -> {
+            Set<CSARDependency> dependencies = archiveIndexer.indexLocationArchives(orchestrator, location);
+            location.getDependencies().addAll(dependencies);
+            alienDAO.save(location);
+        });
     }
 
     /**
@@ -205,12 +229,11 @@ public class OrchestratorStateService {
      */
     public synchronized List<Usage> disable(Orchestrator orchestrator, boolean force) {
         if (!force) {
-            QueryHelper.SearchQueryHelperBuilder searchQueryHelperBuilder = queryHelper.buildSearchQuery(alienDAO.getIndexForType(Deployment.class))
-                    .types(Deployment.class).filters(MapUtil.newHashMap(new String[] { "orchestratorId", "endDate" },
-                            new String[][] { new String[] { orchestrator.getId() }, new String[] { null } }))
-                    .fieldSort("_timestamp", true);
             // If there is at least one active deployment.
-            GetMultipleDataResult<Object> result = alienDAO.search(searchQueryHelperBuilder, 0, 1);
+            GetMultipleDataResult<Deployment> result = alienDAO.buildQuery(Deployment.class)
+                    .setFilters(MapUtil.newHashMap(new String[] { "orchestratorId", "endDate" },
+                            new String[][] { new String[] { orchestrator.getId() }, new String[] { null } }))
+                    .prepareSearch().setFieldSort("_timestamp", true).search(0, 1);
 
             // TODO place a lock to avoid deployments during the disabling of the orchestrator.
             if (result.getData().length > 0) {
@@ -237,11 +260,10 @@ public class OrchestratorStateService {
         return null;
     }
 
-    private List<Usage> generateDeploymentUsages(Object[] data) {
+    private List<Usage> generateDeploymentUsages(Deployment[] data) {
         List<Usage> usages = Lists.newArrayList();
-        for (Object object : data) {
-            Deployment deployment = (Deployment) object;
-            usages.add(new Usage(deployment.getSourceName(), deployment.getSourceType().getSourceType().getSimpleName(), deployment.getSourceId()));
+        for (Deployment deployment : data) {
+            usages.add(new Usage(deployment.getSourceName(), deployment.getSourceType().getSourceType().getSimpleName(), deployment.getSourceId(), null));
         }
         return usages;
     }

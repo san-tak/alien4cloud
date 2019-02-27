@@ -1,47 +1,59 @@
 package alien4cloud.application;
 
-import java.util.*;
+import static alien4cloud.common.ResourceUpdateInterceptor.TopologyVersionChangedInfo;
+import static alien4cloud.dao.FilterUtil.fromKeyValueCouples;
+import static alien4cloud.dao.FilterUtil.singleKeyFilter;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
 
 import javax.annotation.Resource;
 import javax.inject.Inject;
 
-import alien4cloud.deployment.DeploymentService;
-import alien4cloud.events.DeleteEnvironmentEvent;
-import lombok.extern.slf4j.Slf4j;
-
-import org.springframework.context.ApplicationContext;
+import org.alien4cloud.alm.deployment.configuration.events.OnDeploymentConfigCopyEvent;
+import org.alien4cloud.alm.events.AfterApplicationEnvironmentDeleted;
+import org.alien4cloud.alm.events.AfterEnvironmentTopologyVersionChanged;
+import org.alien4cloud.alm.events.BeforeApplicationEnvironmentDeleted;
+import org.alien4cloud.tosca.model.Csar;
+import org.elasticsearch.index.query.FilterBuilder;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
+
+import alien4cloud.common.ResourceUpdateInterceptor;
 import alien4cloud.dao.IGenericSearchDAO;
 import alien4cloud.dao.model.GetMultipleDataResult;
+import alien4cloud.deployment.DeploymentLockService;
 import alien4cloud.deployment.DeploymentRuntimeStateService;
-import alien4cloud.deployment.DeploymentTopologyService;
+import alien4cloud.deployment.DeploymentService;
 import alien4cloud.exception.AlreadyExistException;
 import alien4cloud.exception.DeleteDeployedException;
-import alien4cloud.exception.DeleteLastApplicationEnvironmentException;
+import alien4cloud.exception.DeleteReferencedObjectException;
 import alien4cloud.exception.NotFoundException;
 import alien4cloud.model.application.Application;
 import alien4cloud.model.application.ApplicationEnvironment;
+import alien4cloud.model.application.ApplicationTopologyVersion;
 import alien4cloud.model.application.ApplicationVersion;
 import alien4cloud.model.application.EnvironmentType;
 import alien4cloud.model.deployment.Deployment;
-import alien4cloud.paas.IPaaSCallback;
-import alien4cloud.paas.exception.OrchestratorDisabledException;
+import alien4cloud.model.service.ServiceResource;
 import alien4cloud.paas.model.DeploymentStatus;
 import alien4cloud.security.AuthorizationUtil;
+import alien4cloud.security.IResourceRoles;
 import alien4cloud.security.model.ApplicationEnvironmentRole;
 import alien4cloud.security.model.ApplicationRole;
+import alien4cloud.security.model.Role;
 import alien4cloud.utils.MapUtil;
-
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
-import com.google.common.util.concurrent.SettableFuture;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
 public class ApplicationEnvironmentService {
-    private final static String DEFAULT_ENVIRONMENT_NAME = "Environment";
+    private static final String DEFAULT_ENVIRONMENT_NAME = "Environment";
 
     @Resource(name = "alien-es-dao")
     private IGenericSearchDAO alienDAO;
@@ -52,11 +64,13 @@ public class ApplicationEnvironmentService {
     @Inject
     private DeploymentRuntimeStateService deploymentRuntimeStateService;
     @Inject
-    private DeploymentTopologyService deploymentTopologyService;
-    @Resource
-    private ApplicationContext applicationContext;
+    private ApplicationEventPublisher publisher;
     @Inject
     private DeploymentService deploymentService;
+    @Inject
+    private DeploymentLockService deploymentLockService;
+    @Inject
+    private ResourceUpdateInterceptor resourceUpdateInterceptor;
 
     /**
      * Method used to create a default environment
@@ -64,8 +78,8 @@ public class ApplicationEnvironmentService {
      * @param applicationId The id of the application for which to create the environment.
      * @return The id of the newly created environment.
      */
-    public ApplicationEnvironment createApplicationEnvironment(String user, String applicationId, String versionId) {
-        return createApplicationEnvironment(user, applicationId, DEFAULT_ENVIRONMENT_NAME, null, EnvironmentType.OTHER, versionId);
+    public ApplicationEnvironment createApplicationEnvironment(String user, String applicationId, String topologyVersion) {
+        return createApplicationEnvironment(user, applicationId, DEFAULT_ENVIRONMENT_NAME, null, EnvironmentType.OTHER, topologyVersion);
     }
 
     /**
@@ -78,7 +92,12 @@ public class ApplicationEnvironmentService {
      * @return The newly created environment.
      */
     public ApplicationEnvironment createApplicationEnvironment(String user, String applicationId, String name, String description,
-            EnvironmentType environmentType, String versionId) {
+            EnvironmentType environmentType, String topologyVersion) {
+        ApplicationVersion applicationVersion = applicationVersionService.getOrFailByArchiveId(Csar.createId(applicationId, topologyVersion));
+        if (!applicationVersion.getApplicationId().equals(applicationId)) {
+            throw new IllegalArgumentException(
+                    "The topology version with id <" + topologyVersion + "> is not a topology of a version of the application with id <" + applicationId + ">");
+        }
         // unique app env name for a given app
         ensureNameUnicity(applicationId, name);
         ApplicationEnvironment applicationEnvironment = new ApplicationEnvironment();
@@ -87,11 +106,13 @@ public class ApplicationEnvironmentService {
         applicationEnvironment.setDescription(description);
         applicationEnvironment.setEnvironmentType(environmentType);
         applicationEnvironment.setApplicationId(applicationId);
-        applicationEnvironment.setCurrentVersionId(versionId);
+        applicationEnvironment.setVersion(applicationVersion.getVersion());
+        applicationEnvironment.setTopologyVersion(topologyVersion);
         Map<String, Set<String>> userRoles = Maps.newHashMap();
         userRoles.put(user, Sets.newHashSet(ApplicationEnvironmentRole.DEPLOYMENT_MANAGER.toString()));
         applicationEnvironment.setUserRoles(userRoles);
         alienDAO.save(applicationEnvironment);
+        resourceUpdateInterceptor.runOnNewEnvironment(applicationEnvironment);
         return applicationEnvironment;
     }
 
@@ -102,9 +123,27 @@ public class ApplicationEnvironmentService {
      * @return An array of the environments for the requested application id.
      */
     public ApplicationEnvironment[] getByApplicationId(String applicationId) {
-        GetMultipleDataResult<ApplicationEnvironment> result = alienDAO.find(ApplicationEnvironment.class,
-                MapUtil.newHashMap(new String[]{"applicationId"}, new String[][]{new String[]{applicationId}}), Integer.MAX_VALUE);
-        return result.getData();
+        Map<String, String[]> filters = MapUtil.newHashMap(new String[] { "applicationId" }, new String[][] { new String[] { applicationId } });
+        return alienDAO.search(ApplicationEnvironment.class, null, filters, null, null, 0, Integer.MAX_VALUE, "name.lower_case", false).getData();
+    }
+
+    /**
+     * Get all authorized environments for a given application
+     *
+     * @param applicationId The id of the application for which to get environments.
+     * @return An array of the environments for the requested application id.
+     */
+    public ApplicationEnvironment[] getAuthorizedByApplicationId(String applicationId) {
+        return alienDAO.search(ApplicationEnvironment.class, null, singleKeyFilter("applicationId", applicationId),
+                getEnvironmentAuthorizationFilters(applicationId), null, 0, Integer.MAX_VALUE, "name.lower_case", false).getData();
+    }
+
+    private FilterBuilder getEnvironmentAuthorizationFilters(String applicationId) {
+        Application application = applicationService.checkAndGetApplication(applicationId);
+        if (AuthorizationUtil.hasAuthorizationForApplication(application)) {
+            return null;
+        }
+        return AuthorizationUtil.getResourceAuthorizationFilters();
     }
 
     /**
@@ -115,7 +154,7 @@ public class ApplicationEnvironmentService {
      */
     public ApplicationEnvironment[] getByVersionId(String versionId) {
         GetMultipleDataResult<ApplicationEnvironment> result = alienDAO.find(ApplicationEnvironment.class,
-                MapUtil.newHashMap(new String[]{"currentVersionId"}, new String[][]{new String[]{versionId}}), Integer.MAX_VALUE);
+                MapUtil.newHashMap(new String[] { "currentVersionId" }, new String[][] { new String[] { versionId } }), Integer.MAX_VALUE);
         return result.getData();
     }
 
@@ -124,58 +163,69 @@ public class ApplicationEnvironmentService {
      *
      * @param id The id of the version to delete.
      */
-    public boolean delete(String id) {
-        ApplicationEnvironment environmentToDelete = getOrFail(id);
-        boolean isDeployed = isDeployed(id);
-
-        if (isDeployed) {
-            throw new DeleteDeployedException("Application environment with id <" + id + "> cannot be deleted since it is deployed");
-        }
-
-        deploymentTopologyService.deleteByEnvironmentId(id);
-        alienDAO.delete(ApplicationEnvironment.class, id);
-
-        applicationContext.publishEvent(new DeleteEnvironmentEvent(this, environmentToDelete, deploymentService.getAllOrchestratorIdsAndOrchestratorDeploymentId(id)));
-        return true;
+    public void delete(String id) {
+        ApplicationEnvironment environment = getOrFail(id);
+        deleteCheck(environment);
+        deleteEnvironment(environment);
     }
 
     /**
-     * Delete all environments related to an application
+     * Ensure that every versions of the application can be deleted, throw an exception if not.
      *
-     * @param applicationId The application id
-     * @throws alien4cloud.paas.exception.OrchestratorDisabledException
+     * @param applicationId The id of the application to be deleted.
      */
-    public void deleteByApplication(String applicationId) throws OrchestratorDisabledException {
-        List<String> deployedEnvironments = Lists.newArrayList();
+    public DeleteApplicationEnvironments prepareDeleteByApplication(String applicationId) {
         ApplicationEnvironment[] environments = getByApplicationId(applicationId);
         for (ApplicationEnvironment environment : environments) {
-            if (!this.isDeployed(environment.getId())) {
-                delete(environment.getId());
-            } else {
-                // collect all deployed environment
-                deployedEnvironments.add(environment.getId());
+            deleteCheck(environment);
+        }
+        return new DeleteApplicationEnvironments(environments);
+    }
+
+    /**
+     * This object is returned by the prepareDeleteByApplication operation to ensure that we don't trigger a delete without having performed a check first.
+     */
+    public class DeleteApplicationEnvironments {
+        private ApplicationEnvironment[] environments;
+
+        DeleteApplicationEnvironments(ApplicationEnvironment[] environments) {
+            this.environments = environments;
+        }
+
+        /**
+         * Delete all versions related to an application.
+         */
+        public void delete() {
+            for (ApplicationEnvironment environment : environments) {
+                deleteEnvironment(environment);
             }
         }
-        // couln't delete deployed environment
-        if (deployedEnvironments.size() > 0) {
-            // error could not deployed all app environment for this applcation
-            log.error("Cannot delete these deployed environments : {}", deployedEnvironments.toString());
+    }
+
+    private void deleteCheck(ApplicationEnvironment environment) {
+        boolean isDeployed = isDeployed(environment.getId());
+
+        if (isDeployed) {
+            throw new DeleteDeployedException("Application environment with id <" + environment + "> cannot be deleted since it is deployed");
         }
+
+        failIfExposedAsService(environment);
+    }
+
+    private void deleteEnvironment(ApplicationEnvironment environment) {
+        publisher.publishEvent(new BeforeApplicationEnvironmentDeleted(this, environment.getApplicationId(), environment.getId()));
+        alienDAO.delete(ApplicationEnvironment.class, environment.getId());
+        publisher.publishEvent(new AfterApplicationEnvironmentDeleted(this, environment.getApplicationId(), environment.getId()));
     }
 
     /**
      * Get an active deployment associated with an environment.
      *
-     * @param appEnvironmentId The id of the environment for which to get an active deployment.
+     * @param environmentId The id of the environment for which to get an active deployment.
      * @return The deployment associated with the environment.
      */
-    public Deployment getActiveDeployment(String appEnvironmentId) {
-        GetMultipleDataResult<Deployment> dataResult = alienDAO.search(Deployment.class, null, MapUtil.newHashMap(
-                new String[] { "environmentId", "endDate" }, new String[][] { new String[] { appEnvironmentId }, new String[] { null } }), 1);
-        if (dataResult.getData() != null && dataResult.getData().length > 0) {
-            return dataResult.getData()[0];
-        }
-        return null;
+    public Deployment getActiveDeployment(String environmentId) {
+        return alienDAO.buildQuery(Deployment.class).setFilters(fromKeyValueCouples("environmentId", environmentId, "endDate", null)).prepareSearch().find();
     }
 
     /**
@@ -183,11 +233,8 @@ public class ApplicationEnvironmentService {
      * 
      * @return true if the environment is currently deployed
      */
-    public boolean isDeployed(String appEnvironmentId) {
-        if (getActiveDeployment(appEnvironmentId) == null) {
-            return false;
-        }
-        return true;
+    public boolean isDeployed(String environmentId) {
+        return alienDAO.buildQuery(Deployment.class).setFilters(fromKeyValueCouples("environmentId", environmentId, "endDate", null)).count() > 0;
     }
 
     /**
@@ -214,7 +261,7 @@ public class ApplicationEnvironmentService {
         long result = alienDAO.count(ApplicationEnvironment.class, null,
                 MapUtil.newHashMap(new String[] { "applicationId", "name" }, new String[][] { new String[] { applicationId }, new String[] { name } }));
         if (result > 0) {
-            log.debug("Application environment with name <{}> already exists for application id <{}>", name, applicationId);
+            log.debug("Application environment with name [ {} ] already exists for application id [ {} ]", name, applicationId);
             throw new AlreadyExistException("An application environment with the given name already exists");
         }
     }
@@ -223,62 +270,87 @@ public class ApplicationEnvironmentService {
      * Check rights on the related application and get the application environment
      * If no roles mentioned, all {@link ApplicationRole} values will be used
      * 
-     * @param applicationEnvironmentId
+     * @param applicationEnvironmentId application's environment id
      * @param roles {@link ApplicationRole} to check right on the underlying application
      * @return the corresponding application environment
      */
-    public ApplicationEnvironment checkAndGetApplicationEnvironment(String applicationEnvironmentId, ApplicationRole... roles) {
+    public ApplicationEnvironment checkAndGetApplicationEnvironment(String applicationEnvironmentId, IResourceRoles... roles) {
         ApplicationEnvironment applicationEnvironment = getOrFail(applicationEnvironmentId);
-        Application application = applicationService.checkAndGetApplication(applicationEnvironment.getApplicationId());
-        roles = (roles == null || roles.length == 0) ? ApplicationRole.values() : roles;
-        // check rights on the application linked to this application environment
-        AuthorizationUtil.checkAuthorizationForApplication(application, roles);
+        // Is the user allowed access (application, environment) level ?
+        if (AuthorizationUtil.hasAuthorization(applicationEnvironment, Role.ADMIN, roles)) {
+            return applicationEnvironment;
+        }
+        // is the user allowed to access at the application level
+        applicationService.checkAndGetApplication(applicationEnvironment.getApplicationId(), roles);
         return applicationEnvironment;
     }
 
     /**
-     * Get the environment status regarding the linked topology and cloud
+     * Synchronize inputs between two environments
      * 
-     * @param environment to determine the status
-     * @return {@link DeploymentStatus}
-     * @throws alien4cloud.paas.exception.OrchestratorDisabledException
+     * @param source the source environment
+     * @param target the target environment
      */
-    public DeploymentStatus getStatus(ApplicationEnvironment environment) throws Exception {
+    public void synchronizeEnvironmentInputs(ApplicationEnvironment source, ApplicationEnvironment target) {
+        // We use an event to trigger copy of deployment configuration.
+        // This allow easy addition for future environment specific topology modifiers configuration copy.
+        // Within alien4cloud the event is processed with the following defined order
+        // 10 inputs copy
+        // 11 input artifacts copy
+        // 20 location policies copy
+        // 30 node matching and node configuration copy
+        // 40 copy orchestrator specific properties
+        publisher.publishEvent(new OnDeploymentConfigCopyEvent(this, source, target));
+    }
+
+    /**
+     * Get the deployment status of the given environment.
+     *
+     * @param environment The environment for which to get deployment status.
+     * @return The deployment status of the environment. {@link DeploymentStatus}.
+     * @throws ExecutionException In case there is a failure while communicating with the orchestrator.
+     * @throws InterruptedException In case there is a failure while communicating with the orchestrator.
+     */
+    public DeploymentStatus getStatus(ApplicationEnvironment environment) {
         final Deployment deployment = getActiveDeployment(environment.getId());
+        return getStatus(deployment);
+    }
+
+    /**
+     * Get the deployment status of the given deployment.
+     *
+     * @param deployment The deployment for which to get deployment status.
+     * @return The deployment status of the environment. {@link DeploymentStatus}.
+     * @throws ExecutionException In case there is a failure while communicating with the orchestrator.
+     * @throws InterruptedException In case there is a failure while communicating with the orchestrator.
+     */
+    public DeploymentStatus getStatus(final Deployment deployment) {
         if (deployment == null) {
             return DeploymentStatus.UNDEPLOYED;
         }
-        final SettableFuture<DeploymentStatus> statusSettableFuture = SettableFuture.create();
-        // update the deployment status from PaaS if it cannot be found.
-        deploymentRuntimeStateService.getDeploymentStatus(deployment, new IPaaSCallback<DeploymentStatus>() {
-            @Override
-            public void onSuccess(DeploymentStatus data) {
-                statusSettableFuture.set(data);
+        return deploymentLockService.doWithDeploymentReadLock(deployment.getOrchestratorDeploymentId(), () -> {
+            DeploymentStatus currentStatus = deploymentRuntimeStateService.getDeploymentStatus(deployment);
+            if (DeploymentStatus.UNDEPLOYED.equals(currentStatus)) {
+                deploymentService.markUndeployed(deployment);
             }
-
-            @Override
-            public void onFailure(Throwable throwable) {
-                statusSettableFuture.setException(throwable);
-            }
+            return currentStatus;
         });
-        DeploymentStatus currentStatus = statusSettableFuture.get();
-        if (DeploymentStatus.UNDEPLOYED.equals(currentStatus)) {
-            deployment.setEndDate(new Date());
-            alienDAO.save(deployment);
-        }
-        return currentStatus;
     }
 
     /**
      * Get the topology id linked to the environment
-     * 
+     *
      * @param applicationEnvironmentId The id of the environment.
      * @return a topology id or null
      */
+    @Deprecated
     public String getTopologyId(String applicationEnvironmentId) {
         ApplicationEnvironment applicationEnvironment = getOrFail(applicationEnvironmentId);
-        ApplicationVersion applicationVersion = applicationVersionService.get(applicationEnvironment.getCurrentVersionId());
-        return applicationVersion == null ? null : applicationVersion.getTopologyId();
+        ApplicationVersion applicationVersion = applicationVersionService
+                .getOrFailByArchiveId(Csar.createId(applicationEnvironment.getApplicationId(), applicationEnvironment.getTopologyVersion()));
+        ApplicationTopologyVersion topologyVersion = applicationVersion == null ? null
+                : applicationVersion.getTopologyVersions().get(applicationEnvironment.getTopologyVersion());
+        return topologyVersion == null ? null : topologyVersion.getArchiveId();
     }
 
     /**
@@ -297,5 +369,33 @@ public class ApplicationEnvironmentService {
             environment = getOrFail(applicationEnvironmentId);
         }
         return environment;
+    }
+
+    public void updateTopologyVersion(ApplicationEnvironment applicationEnvironment, String oldTopologyVersion, String newVersion, String newTopologyVersion,
+            String environmentIdToCopyInput) {
+        applicationEnvironment.setVersion(newVersion);
+        applicationEnvironment.setTopologyVersion(newTopologyVersion);
+        if (environmentIdToCopyInput != null) {
+            ApplicationEnvironment environmentToCopyInput = checkAndGetApplicationEnvironment(environmentIdToCopyInput, ApplicationRole.APPLICATION_MANAGER);
+            alienDAO.save(applicationEnvironment);
+            synchronizeEnvironmentInputs(environmentToCopyInput, applicationEnvironment);
+        } else {
+            alienDAO.save(applicationEnvironment);
+        }
+        publisher.publishEvent(new AfterEnvironmentTopologyVersionChanged(this, oldTopologyVersion, newTopologyVersion, applicationEnvironment.getId(),
+                applicationEnvironment.getApplicationId()));
+
+        resourceUpdateInterceptor.runOnEnvironmentTopologyVersionChanged(new TopologyVersionChangedInfo(
+                applicationEnvironment,
+                oldTopologyVersion,
+                newTopologyVersion
+        ));
+    }
+
+    private void failIfExposedAsService(ApplicationEnvironment environment) {
+        if (alienDAO.buildQuery(ServiceResource.class).setFilters(fromKeyValueCouples("environmentId", environment.getId())).prepareSearch().count() > 0) {
+            throw new DeleteReferencedObjectException("Environment " + environment.getApplicationId() + "/" + environment.getName() + "(" + environment.getId()
+                    + ") could not be deleted since it is exposed as a service.");
+        }
     }
 }

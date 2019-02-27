@@ -1,31 +1,34 @@
 package alien4cloud.orchestrators.locations.services;
 
+import static alien4cloud.utils.AlienUtils.safe;
+
 import java.util.List;
 import java.util.Set;
 
 import javax.inject.Inject;
 
+import org.alien4cloud.tosca.model.CSARDependency;
+import org.alien4cloud.tosca.model.definitions.ScalarPropertyValue;
+import org.alien4cloud.tosca.model.templates.Capability;
+import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.normative.constants.NormativeComputeConstants;
+import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.stereotype.Component;
+
+import com.google.common.base.Objects;
+import com.google.common.collect.Lists;
+
+import alien4cloud.exception.NotFoundException;
+import alien4cloud.model.orchestrators.locations.LocationResourceTemplate;
+import alien4cloud.orchestrators.plugin.ILocationResourceAccessor;
+import alien4cloud.tosca.topology.TemplateBuilder;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
-
-import org.apache.commons.collections4.MapUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.stereotype.Component;
-
-import alien4cloud.exception.NotFoundException;
-import alien4cloud.model.components.CSARDependency;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.orchestrators.locations.LocationResourceTemplate;
-import alien4cloud.model.topology.Capability;
-import alien4cloud.model.topology.NodeTemplate;
-import alien4cloud.orchestrators.plugin.ILocationResourceAccessor;
-import alien4cloud.topology.TopologyServiceCore;
-
-import com.google.common.base.Objects;
-import com.google.common.collect.Lists;
 
 /**
  * Location Resource Generator Service provides utilities to generate location resources .
@@ -34,7 +37,7 @@ import com.google.common.collect.Lists;
 @Slf4j
 public class LocationResourceGeneratorService {
     @Inject
-    private TopologyServiceCore topologyService;
+    private TemplateBuilder templateBuilder;
 
     @Getter
     @Setter
@@ -51,7 +54,7 @@ public class LocationResourceGeneratorService {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class ComputeContext {
-        private List<IndexedNodeType> nodeTypes = Lists.newArrayList();
+        private List<NodeType> nodeTypes = Lists.newArrayList();
         private String generatedNamePrefix;
         private String imageIdPropertyName;
         private String flavorIdPropertyName;
@@ -63,12 +66,13 @@ public class LocationResourceGeneratorService {
      *
      * @param imageContext
      * @param flavorContext
-     * @param computeContext
+     * @param linuxComputeContext
+     * @param windowsComputeContext
      * @param resourceAccessor
      * @return
      */
     public List<LocationResourceTemplate> generateComputeFromImageAndFlavor(ImageFlavorContext imageContext, ImageFlavorContext flavorContext,
-            ComputeContext computeContext, ILocationResourceAccessor resourceAccessor) {
+            ComputeContext linuxComputeContext, ComputeContext windowsComputeContext, ILocationResourceAccessor resourceAccessor) {
         List<LocationResourceTemplate> images = imageContext.getTemplates();
         List<LocationResourceTemplate> flavors = flavorContext.getTemplates();
         Set<CSARDependency> dependencies = resourceAccessor.getDependencies();
@@ -79,16 +83,17 @@ public class LocationResourceGeneratorService {
             for (LocationResourceTemplate flavor : flavors) {
                 String defaultComputeName = generateDefaultName(image, flavor);
                 int count = 0;
-                for (IndexedNodeType indexedNodeType : computeContext.getNodeTypes()) {
+                ComputeContext computeContext = isWindowsImage(image) && windowsComputeContext != null ? windowsComputeContext : linuxComputeContext;
+                for (NodeType indexedNodeType : computeContext.getNodeTypes()) {
                     String name = StringUtils.isNotBlank(computeContext.getGeneratedNamePrefix()) ? computeContext.getGeneratedNamePrefix()
                             : defaultComputeName;
                     if (count > 0) {
                         name = name + "_" + count;
                     }
-                    NodeTemplate node = topologyService.buildNodeTemplate(dependencies, indexedNodeType, null);
+                    NodeTemplate node = templateBuilder.buildNodeTemplate(dependencies, indexedNodeType);
                     // set the imageId
-                    node.getProperties()
-                            .put(computeContext.getImageIdPropertyName(), image.getTemplate().getProperties().get(imageContext.getIdPropertyName()));
+                    node.getProperties().put(computeContext.getImageIdPropertyName(),
+                            image.getTemplate().getProperties().get(imageContext.getIdPropertyName()));
                     // set the flavorId
                     node.getProperties().put(computeContext.getFlavorIdPropertyName(),
                             flavor.getTemplate().getProperties().get(flavorContext.getIdPropertyName()));
@@ -109,6 +114,24 @@ public class LocationResourceGeneratorService {
         }
 
         return generated;
+    }
+
+    /**
+     * Find if an image is windows image, defaults to linux if property is not configured.
+     * 
+     * @param image The image to check.
+     * @return True if the image is windows.
+     */
+    private boolean isWindowsImage(LocationResourceTemplate image) {
+
+        if (image.getTemplate() == null || safe(image.getTemplate().getCapabilities()).get(NormativeComputeConstants.OS_CAPABILITY) == null
+                || safe(image.getTemplate().getCapabilities().get(NormativeComputeConstants.OS_CAPABILITY).getProperties())
+                        .get(NormativeComputeConstants.OS_TYPE) == null) {
+            return false;
+        }
+
+        return "windows".equals(((ScalarPropertyValue) image.getTemplate().getCapabilities().get(NormativeComputeConstants.OS_CAPABILITY).getProperties()
+                .get(NormativeComputeConstants.OS_TYPE)).getValue().toLowerCase());
     }
 
     private String generateDefaultName(LocationResourceTemplate image, LocationResourceTemplate flavor) {
@@ -149,7 +172,7 @@ public class LocationResourceGeneratorService {
         context.setImageIdPropertyName(imageIdPropertyName);
         context.setGeneratedNamePrefix(namePefix);
         try {
-            IndexedNodeType nodeType = resourceAccessor.getIndexedToscaElement(elementType);
+            NodeType nodeType = resourceAccessor.getIndexedToscaElement(elementType);
             context.getNodeTypes().add(nodeType);
         } catch (NotFoundException e) {
             log.warn("No compute found with the element id: " + elementType, e);

@@ -4,17 +4,18 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.topology.NodeTemplate;
-import alien4cloud.model.topology.ScalingPolicy;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.templates.ScalingPolicy;
 
 import com.google.common.collect.Lists;
 
 @Getter
 @Setter
-public class PaaSNodeTemplate extends AbstractPaaSTemplate<IndexedNodeType, NodeTemplate> {
+public class PaaSNodeTemplate extends AbstractPaaSTemplate<NodeType, NodeTemplate> {
 
     /** The path to the archive that contains the node type. **/
     private Path csarPath;

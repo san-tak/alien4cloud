@@ -1,52 +1,27 @@
 package alien4cloud.tosca.parser.impl.base;
 
-import lombok.AllArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Component;
 import org.yaml.snakeyaml.nodes.Node;
 
 import alien4cloud.tosca.parser.INodeParser;
 import alien4cloud.tosca.parser.ParsingContextExecution;
 import alien4cloud.tosca.parser.ParsingError;
 import alien4cloud.tosca.parser.impl.ErrorCode;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Parser implementation that delegates parsing to a parser referenced in the parser registry based on the type key.
  */
 @Slf4j
-@AllArgsConstructor
+@Component
+@Scope(value = ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 public class ReferencedParser<T> implements INodeParser<T> {
-
     private String typeName;
 
-    private boolean deferred;
-
-    private int deferredOrder;
-
     public ReferencedParser(String typeName) {
-        this.deferred = false;
-        this.deferredOrder = 0;
         this.typeName = typeName;
-    }
-
-    @Override
-    public boolean isDeferred(ParsingContextExecution context) {
-        if (deferred) {
-            return true;
-        } else {
-            INodeParser<?> innerNodeParser = getParser(context);
-            return innerNodeParser.isDeferred(context);
-        }
-    }
-
-    @Override
-    public int getDeferredOrder(ParsingContextExecution context) {
-        if (deferredOrder > 0) {
-            return deferredOrder;
-        } else {
-            INodeParser<?> innerNodeParser = getParser(context);
-            return innerNodeParser.getDeferredOrder(context);
-        }
     }
 
     @Override
@@ -59,13 +34,5 @@ public class ReferencedParser<T> implements INodeParser<T> {
             return null;
         }
         return (T) delegate.parse(node, context);
-    }
-
-    private INodeParser<?> getParser(ParsingContextExecution context) {
-        INodeParser<?> innerNodeParser = context.getRegistry().get(typeName);
-        if (innerNodeParser == null) {
-            context.getParsingErrors().add(new ParsingError(ErrorCode.ALIEN_MAPPING_ERROR, "No parser found for yaml type", null, "", null, typeName));
-        }
-        return innerNodeParser;
     }
 }

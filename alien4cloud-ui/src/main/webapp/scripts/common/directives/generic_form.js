@@ -19,6 +19,8 @@ define(function(require) {
         rootName: '=?',
         rootObject: '=?',
         formTitle: '@',
+        saveLabel: '@',
+        cancelLabel: '@',
         type: '=',
         /* Form styling options */
         formStyle: '@',
@@ -31,6 +33,7 @@ define(function(require) {
         showTree: '=',
         showPath: '=',
         automaticSave: '=',
+        disableToasterOnSuccess: '=',
         partialUpdate: '=',
         useXeditable: '=',
         configuration: '=?',
@@ -123,6 +126,9 @@ define(function(require) {
       scope: {
         rootObject: '=',
         formTitle: '@',
+        disableToasterOnSuccess: '=',
+        saveLabel: '@',
+        cancelLabel: '@',
         type: '=',
         labelSize: '=',
         suggest: '&',
@@ -134,6 +140,7 @@ define(function(require) {
         scope.automaticSave = false;
         scope.partialUpdate = false;
         scope.useXeditable = false;
+        scope.disableToasterOnSuccess = true;
         FORMS.initGenericForm(scope, toaster, $filter, element);
         $interval(function() {
           FORMS.initComplexProperties(scope, scope.type, element.find('.genericformpropertiescontainer'), $compile);
@@ -185,7 +192,6 @@ define(function(require) {
       for (var id in scope.configuration.validationStatuses) {
         if (scope.configuration.validationStatuses.hasOwnProperty(id) && !scope.configuration.validationStatuses[id]) {
           scope.configuration.showErrorsAlert = true;
-          return;
         }
       }
       var savePromise = saveCallback({
@@ -193,8 +199,6 @@ define(function(require) {
       });
       var cleanUpAfterSave = function() {
         delete scope.configuration.toBeSaved;
-        delete scope.configuration.validationErrors;
-        scope.configuration.showErrorsAlert = false;
       };
 
       if (_.defined(savePromise)) {
@@ -209,17 +213,15 @@ define(function(require) {
               scope.configuration.validationErrors = errors;
               scope.configuration.showErrorsAlert = true;
             } else {
-              if (!scope.configuration.automaticSave) {
+              if (!scope.configuration.automaticSave  && !scope.disableToasterOnSuccess) {
                 toaster.pop('success', $filter('translate')(scope.formTitle), $filter('translate')('GENERIC_FORM.SAVE_IS_DONE'), 4000, 'trustedHtml', null);
               }
               cleanUpAfterSave();
             }
-
           }
-
         });
       } else {
-        if (!scope.configuration.automaticSave) {
+        if (!scope.configuration.automaticSave && !scope.disableToasterOnSuccess) {
           toaster.pop('success', $filter('translate')(scope.formTitle), $filter('translate')('GENERIC_FORM.SAVE_IS_DONE'), 4000, 'trustedHtml', null);
         }
         cleanUpAfterSave();
@@ -364,7 +366,7 @@ define(function(require) {
             if (scope.configuration.automaticSave) {
               scope.saveAction(scope.rootObject);
             }
-          } else {
+          } else  {
             if (_.isObject(propertyValue) || _.isArray(propertyValue)) {
               // It's an object or an array then don't try to validate constraints
               FORMS.setValueForPath(scope.rootObject, propertyValue, scope.path);
@@ -383,6 +385,7 @@ define(function(require) {
                   // No error save the result
                   FORMS.setValueForPath(scope.rootObject, propertyValue, scope.path);
                   if (scope.configuration.automaticSave) {
+                    scope.configuration.validationStatuses[scope.propertyName] = true // Force validation status in order to save the value of the property
                     scope.saveAction(scope.rootObject);
                   }
                 }
@@ -418,7 +421,7 @@ define(function(require) {
         scope.input.newValue = scope.input.value;
         if (scope.propertyType._type === 'number') {
           if (_.undefined(scope.propertyType._step)) {
-            scope.propertyType._step = 1;
+            scope.propertyType._step = 'any';
           }
         }
 
@@ -695,7 +698,7 @@ define(function(require) {
       templateUrl: 'views/generic-form/abstract_form_template.html',
       link: function(scope, element) {
         var listenToImplementationChange = function() {
-          scope.selectChangeListener = scope.$watch('propertyType._selectedImplementation.' + scope.propertyName, function(newValue) {
+          scope.selectChangeListener = scope.$watch('propertyType._selectedImplementation["' + scope.propertyName + '"]', function(newValue) {
             if (_.defined(newValue) && scope.implementationType !== scope.propertyType._implementationTypes[newValue]) {
               // When selection changed, we must suppress root object
               if (angular.isDefined(scope.implementationType)) {
@@ -921,6 +924,18 @@ define(function(require) {
     FORMS.initPath(formName, scope);
     FORMS.logDirectiveOperation(scope, 'Create');
     // Watch path to see if property name might change
+    var listenOnInputValueChange = function() {
+      var inputValuePathFromRoot = FORMS.getPathAsText('rootObject', scope.path);
+      scope.inputValueChangeListener = scope.$watch(inputValuePathFromRoot, function(newValue) {
+        if (scope.input.value !== newValue && _.defined(scope.inputValueChangeListener)) {
+          scope.input.value = newValue;
+          FORMS.applyMultiplierToInput(scope);
+          if (angular.isDefined(scope.validateInput)) {
+            scope.validateInput();
+          }
+        }
+      });
+    };
     scope.$watchCollection('path', function(newPath, oldPath) {
       if (!_.isEqual(newPath, oldPath)) {
         FORMS.logDirectiveOperation(scope, 'Path begins to change as new path is [' + newPath + '] and old one is [' + oldPath + ']');
@@ -944,19 +959,6 @@ define(function(require) {
         FORMS.logDirectiveOperation(scope, 'Path has changed');
       }
     });
-    var listenOnInputValueChange = function() {
-      var inputValuePathFromRoot = FORMS.getPathAsText('rootObject', scope.path);
-      scope.inputValueChangeListener = scope.$watch(inputValuePathFromRoot, function(newValue) {
-        if (scope.input.value !== newValue && _.defined(scope.inputValueChangeListener)) {
-          scope.input.value = newValue;
-          FORMS.applyMultiplierToInput(scope);
-          if (angular.isDefined(scope.validateInput)) {
-            scope.validateInput();
-          }
-        }
-      });
-    };
-
     listenOnInputValueChange();
     FORMS.initOnDestroy(scope, element);
     FORMS.initFormSaveAction(scope, scope.saveAction);
@@ -967,6 +969,10 @@ define(function(require) {
     if (validateInput) {
       scope.validateInput = function() {
         scope.isInputValid = !scope.propertyType._notNull || _.defined(scope.input.value);
+        if (!scope.isInputValid && scope.propertyType._definition && scope.propertyType._definition.default && _.defined(scope.propertyType._definition.default.value)) {
+          // if the property has a default value, we consider this input has valid
+          scope.isInputValid = true;
+        }
         if (scope.configuration.validationErrors && scope.configuration.validationErrors[FORMS.valueRequiredError]) {
           // For the moment only error that a field is required exist
           var indexOfError = scope.configuration.validationErrors[FORMS.valueRequiredError].indexOf(scope.labelPath);
@@ -1098,7 +1104,7 @@ define(function(require) {
       if (angular.isNumber(path[i])) {
         pathText += '[' + path[i] + ']';
       } else {
-        pathText += '.' + path[i];
+        pathText += '["' + path[i]+ '"]';
       }
     }
     return pathText;

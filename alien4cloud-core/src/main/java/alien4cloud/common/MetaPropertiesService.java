@@ -1,7 +1,15 @@
 package alien4cloud.common;
 
+import java.util.List;
+import java.util.Map;
+
 import javax.annotation.Resource;
 
+import alien4cloud.dao.model.GetMultipleDataResult;
+import alien4cloud.model.common.MetaPropertyTarget;
+import alien4cloud.utils.MapUtil;
+import org.alien4cloud.tosca.exceptions.ConstraintValueDoNotMatchPropertyTypeException;
+import org.alien4cloud.tosca.exceptions.ConstraintViolationException;
 import org.elasticsearch.common.collect.Maps;
 import org.springframework.stereotype.Service;
 
@@ -10,12 +18,7 @@ import alien4cloud.exception.NotFoundException;
 import alien4cloud.model.common.IMetaProperties;
 import alien4cloud.model.common.MetaPropConfiguration;
 import alien4cloud.tosca.properties.constraints.ConstraintUtil.ConstraintInformation;
-import alien4cloud.tosca.properties.constraints.exception.ConstraintValueDoNotMatchPropertyTypeException;
-import alien4cloud.tosca.properties.constraints.exception.ConstraintViolationException;
 import alien4cloud.utils.services.ConstraintPropertyService;
-
-import java.util.List;
-import java.util.Map;
 
 /**
  * Service that manage meta-property for resources with meta-properties.
@@ -24,8 +27,6 @@ import java.util.Map;
 public class MetaPropertiesService {
     @Resource(name = "alien-es-dao")
     private IGenericSearchDAO alienDAO;
-    @Resource
-    private ConstraintPropertyService constraintPropertyService;
 
     /**
      * Add or update a meta-property to a {{IMetaProperties}} resource.
@@ -46,7 +47,7 @@ public class MetaPropertiesService {
 
         if (value != null) {
             // by convention updateproperty with null value => reset to default if exists
-            constraintPropertyService.checkSimplePropertyConstraint(key, value, propertyDefinition);
+            ConstraintPropertyService.checkPropertyConstraint(key, value, propertyDefinition);
         }
 
         if (resource.getMetaProperties() == null) {
@@ -74,4 +75,37 @@ public class MetaPropertiesService {
         }
         return configurationMap;
     }
+
+    /**
+     *
+     * @param name
+     * @return the
+     */
+    public String getMetapropertykeyByName(String name, String target) {
+        Map<String, String[]> filters = Maps.newHashMap();
+        filters.put("name", new String[]{name});
+        filters.put("target", new String[]{target.toString()});
+        GetMultipleDataResult<MetaPropConfiguration> result = alienDAO.find(MetaPropConfiguration.class, filters, 1);
+        if (result.getTotalResults() > 0) {
+            return result.getData()[0].getId();
+        }
+        return null;
+    }
+
+    /**
+     * @param target
+     * @return For the given target type, a map of @{@link MetaPropConfiguration}. The key of the map is the meta property name.
+     */
+    public Map<String, MetaPropConfiguration> getMetaPropConfigurationsByName(String target) {
+        // load all meta properties configurations for target of type components
+        Map<String, String[]> filters =  MapUtil.newHashMap(new String[] { "target" }, new String[][] { new String[] { target } });
+        GetMultipleDataResult<MetaPropConfiguration> metaPropConfigurations = alienDAO.find(MetaPropConfiguration.class, filters, Integer.MAX_VALUE);
+        // a map of metaprop config name -> id
+        Map<String, MetaPropConfiguration> metapropsNames = Maps.newHashMap();
+        for (MetaPropConfiguration metaPropConfiguration : metaPropConfigurations.getData()) {
+            metapropsNames.put(metaPropConfiguration.getName(), metaPropConfiguration);
+        }
+        return metapropsNames;
+    }
+
 }

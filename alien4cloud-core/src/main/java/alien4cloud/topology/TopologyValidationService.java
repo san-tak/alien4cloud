@@ -1,41 +1,40 @@
 package alien4cloud.topology;
 
-import alien4cloud.application.ApplicationService;
-import alien4cloud.common.MetaPropertiesService;
-import alien4cloud.common.TagService;
-import alien4cloud.model.topology.Topology;
+import static alien4cloud.utils.AlienUtils.safe;
+
+import java.util.List;
+
+import javax.annotation.Resource;
+
+import org.alien4cloud.tosca.model.templates.Topology;
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.MapUtils;
+import org.springframework.stereotype.Service;
+
 import alien4cloud.paas.wf.WorkflowsBuilderService;
+import alien4cloud.topology.task.AbstractRelationshipTask;
 import alien4cloud.topology.task.AbstractTask;
+import alien4cloud.topology.task.ArtifactTask;
+import alien4cloud.topology.task.EmptyTask;
+import alien4cloud.topology.task.InputArtifactTask;
 import alien4cloud.topology.task.NodeFiltersTask;
 import alien4cloud.topology.task.PropertiesTask;
 import alien4cloud.topology.task.RequirementsTask;
 import alien4cloud.topology.task.SuggestionsTask;
 import alien4cloud.topology.task.TaskLevel;
 import alien4cloud.topology.task.WorkflowTask;
+import alien4cloud.topology.validation.DeprecatedNodeTypesValidationService;
 import alien4cloud.topology.validation.NodeFilterValidationService;
-import alien4cloud.topology.validation.TopologyAbstractNodeValidationService;
 import alien4cloud.topology.validation.TopologyAbstractRelationshipValidationService;
+import alien4cloud.topology.validation.TopologyArtifactsValidationService;
 import alien4cloud.topology.validation.TopologyPropertiesValidationService;
 import alien4cloud.topology.validation.TopologyRequirementBoundsValidationServices;
-import alien4cloud.utils.services.ConstraintPropertyService;
-import java.util.List;
-import javax.annotation.Resource;
+import alien4cloud.tosca.context.ToscaContextual;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.collections4.CollectionUtils;
-import org.springframework.stereotype.Service;
 
 @Service
 @Slf4j
 public class TopologyValidationService {
-    @Resource
-    private MetaPropertiesService metaPropertiesService;
-    @Resource
-    private ApplicationService applicationService;
-    @Resource
-    private TagService tagService;
-    @Resource
-    private ConstraintPropertyService constraintPropertyService;
-
     @Resource
     private TopologyPropertiesValidationService topologyPropertiesValidationService;
     @Resource
@@ -43,11 +42,13 @@ public class TopologyValidationService {
     @Resource
     private TopologyAbstractRelationshipValidationService topologyAbstractRelationshipValidationService;
     @Resource
-    private TopologyAbstractNodeValidationService topologyAbstractNodeValidationService;
-    @Resource
     private NodeFilterValidationService nodeFilterValidationService;
     @Resource
     private WorkflowsBuilderService workflowBuilderService;
+    @Resource
+    private TopologyArtifactsValidationService topologyArtifactsValidationService;
+    @Resource
+    private DeprecatedNodeTypesValidationService deprecatedNodeTypesValidationService;
 
     /**
      * Validate if a topology is valid for deployment configuration or not,
@@ -56,9 +57,20 @@ public class TopologyValidationService {
      * @param topology topology to be validated
      * @return the validation result
      */
+    @ToscaContextual
     public TopologyValidationResult validateTopology(Topology topology) {
+        TopologyValidationResult dto = doValidate(topology);
+        // set the source of the tasks to know that they are related to validation of the source topology and not deployment topology
+        addSource(dto.getTaskList());
+        addSource(dto.getWarningList());
+        addSource(dto.getInfoList());
+        return dto;
+    }
+
+    private TopologyValidationResult doValidate(Topology topology) {
         TopologyValidationResult dto = new TopologyValidationResult();
-        if (topology.getNodeTemplates() == null || topology.getNodeTemplates().size() < 1) {
+        if (MapUtils.isEmpty(topology.getNodeTemplates())) {
+            dto.addTask(new EmptyTask());
             dto.setValid(false);
             return dto;
         }
@@ -69,16 +81,17 @@ public class TopologyValidationService {
         // validate abstract relationships
         dto.addTasks(topologyAbstractRelationshipValidationService.validateAbstractRelationships(topology));
 
-        // validate abstract node types and find suggestions
-        // in this step, this is a warning, since they can be replaced by nodes comming from the location
-        // TODO should we do this here or not?
-        // dto.addToWarningList(topologyAbstractNodeValidationService.findReplacementForAbstracts(topology));
-
         // validate requirements lowerBounds
         dto.addTasks(topologyRequirementBoundsValidationServices.validateRequirementsLowerBounds(topology));
 
         // validate the node filters for all relationships
         dto.addTasks(nodeFilterValidationService.validateStaticRequirementFilters(topology));
+
+        // validate that all artifacts has been filled
+        dto.addTasks(topologyArtifactsValidationService.validate(topology));
+
+        // Add warning for deprecated nodes.
+        dto.addWarnings(deprecatedNodeTypesValidationService.validate(topology));
 
         // validate required properties (properties of NodeTemplate, Relationship and Capability)
         List<PropertiesTask> validateProperties = topologyPropertiesValidationService.validateStaticProperties(topology);
@@ -93,6 +106,10 @@ public class TopologyValidationService {
         dto.setValid(isValidTaskList(dto.getTaskList()));
 
         return dto;
+    }
+
+    private void addSource(List<AbstractTask> tasks) {
+        safe(tasks).forEach(abstractTask -> abstractTask.setSource("topology"));
     }
 
     public static boolean hasOnlyPropertiesWarnings(List<PropertiesTask> properties) {
@@ -121,7 +138,8 @@ public class TopologyValidationService {
         for (AbstractTask task : taskList) {
             // checking some required tasks
             if (task instanceof SuggestionsTask || task instanceof RequirementsTask || task instanceof PropertiesTask || task instanceof NodeFiltersTask
-                    || task instanceof WorkflowTask) {
+                    || task instanceof WorkflowTask || task instanceof ArtifactTask || task instanceof InputArtifactTask
+                    || task instanceof AbstractRelationshipTask) {
                 return false;
             }
         }

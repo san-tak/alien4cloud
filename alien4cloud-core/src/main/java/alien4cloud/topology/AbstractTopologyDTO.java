@@ -1,17 +1,18 @@
 package alien4cloud.topology;
 
 import java.util.Map;
-import java.util.Set;
+
+import org.alien4cloud.tosca.model.templates.Topology;
+import org.alien4cloud.tosca.model.types.CapabilityType;
+import org.alien4cloud.tosca.model.types.DataType;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.model.types.PolicyType;
+import org.alien4cloud.tosca.model.types.RelationshipType;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import alien4cloud.model.components.IndexedCapabilityType;
-import alien4cloud.model.components.IndexedDataType;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.components.IndexedRelationshipType;
-import alien4cloud.model.topology.Topology;
 
 @Getter
 @Setter
@@ -19,9 +20,10 @@ import alien4cloud.model.topology.Topology;
 @AllArgsConstructor
 public class AbstractTopologyDTO<T extends Topology> {
     private T topology;
-    private Map<String, IndexedNodeType> nodeTypes;
-    private Map<String, IndexedRelationshipType> relationshipTypes;
-    private Map<String, IndexedCapabilityType> capabilityTypes;
-    private Map<String, Map<String, Set<String>>> outputCapabilityProperties;
-    private Map<String, IndexedDataType> dataTypes;
+    // elementId -> Type
+    private Map<String, NodeType> nodeTypes;
+    private Map<String, RelationshipType> relationshipTypes;
+    private Map<String, CapabilityType> capabilityTypes;
+    private Map<String, DataType> dataTypes;
+    private Map<String, PolicyType> policyTypes;
 }

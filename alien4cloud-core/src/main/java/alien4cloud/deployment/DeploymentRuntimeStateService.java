@@ -1,14 +1,5 @@
 package alien4cloud.deployment;
 
-import java.util.Date;
-import java.util.Map;
-
-import javax.annotation.Resource;
-import javax.inject.Inject;
-
-import org.elasticsearch.mapping.QueryHelper;
-import org.springframework.stereotype.Service;
-
 import alien4cloud.dao.IGenericSearchDAO;
 import alien4cloud.dao.model.GetMultipleDataResult;
 import alien4cloud.model.deployment.Deployment;
@@ -17,26 +8,23 @@ import alien4cloud.orchestrators.plugin.IOrchestratorPlugin;
 import alien4cloud.paas.IPaaSCallback;
 import alien4cloud.paas.OrchestratorPluginService;
 import alien4cloud.paas.exception.OrchestratorDisabledException;
-import alien4cloud.paas.model.AbstractMonitorEvent;
-import alien4cloud.paas.model.DeploymentStatus;
-import alien4cloud.paas.model.InstanceInformation;
-import alien4cloud.paas.model.PaaSDeploymentContext;
-import alien4cloud.paas.model.PaaSDeploymentStatusMonitorEvent;
-import alien4cloud.paas.model.PaaSInstancePersistentResourceMonitorEvent;
-import alien4cloud.paas.model.PaaSInstanceStateMonitorEvent;
-import alien4cloud.paas.model.PaaSMessageMonitorEvent;
-import alien4cloud.paas.model.PaaSTopologyDeploymentContext;
+import alien4cloud.paas.model.*;
 import alien4cloud.utils.MapUtil;
-
 import com.google.common.collect.Maps;
+import com.google.common.util.concurrent.SettableFuture;
+import lombok.SneakyThrows;
+import org.elasticsearch.mapping.QueryHelper;
+import org.springframework.stereotype.Service;
+
+import javax.annotation.Resource;
+import javax.inject.Inject;
+import java.util.Map;
 
 /**
  * Manage runtime operations on deployments.
  */
 @Service
 public class DeploymentRuntimeStateService {
-    @Resource(name = "alien-es-dao")
-    private IGenericSearchDAO alienDao;
     @Resource(name = "alien-monitor-es-dao")
     private IGenericSearchDAO alienMonitorDao;
     @Inject
@@ -49,6 +37,8 @@ public class DeploymentRuntimeStateService {
     private DeploymentContextService deploymentContextService;
     @Inject
     private DeploymentTopologyService deploymentTopologyService;
+    @Inject
+    private DeploymentLockService deploymentLockService;
 
     /**
      * Get the deployed (runtime) topology of an application from the environment id
@@ -84,37 +74,60 @@ public class DeploymentRuntimeStateService {
     }
 
     /**
-     * Get the current deployment status for a topology.
+     * Synchronously get the current deployment status for a topology.
      *
-     * @param deployment deployment for which we want the status
-     * @param callback that will be called when status is available*
+     * @param deployment deployment for which we want the status.
      * @return The status of the topology.
-     * @throws alien4cloud.paas.exception.OrchestratorDisabledException In case the cloud selected for the topology is disabled.
      */
-    public void getDeploymentStatus(final Deployment deployment, final IPaaSCallback<DeploymentStatus> callback) throws OrchestratorDisabledException {
-        if (deployment == null) {
-            callback.onSuccess(DeploymentStatus.UNDEPLOYED);
-            return;
-        }
-        IOrchestratorPlugin orchestratorPlugin = orchestratorPluginService.getOrFail(deployment.getOrchestratorId());
-
-        PaaSDeploymentContext deploymentContext = new PaaSDeploymentContext(deployment, getRuntimeTopology(deployment.getId()));
-        IPaaSCallback<DeploymentStatus> esCallback = new IPaaSCallback<DeploymentStatus>() {
+    @SneakyThrows
+    public DeploymentStatus getDeploymentStatus(Deployment deployment) {
+        final SettableFuture<DeploymentStatus> statusSettableFuture = SettableFuture.create();
+        // update the deployment status from PaaS if it cannot be found.
+        getDeploymentStatus(deployment, new IPaaSCallback<DeploymentStatus>() {
             @Override
             public void onSuccess(DeploymentStatus data) {
-                if (data == DeploymentStatus.UNDEPLOYED) {
-                    deployment.setEndDate(new Date());
-                    alienDao.save(deployment);
-                }
-                callback.onSuccess(data);
+                statusSettableFuture.set(data);
             }
 
             @Override
             public void onFailure(Throwable throwable) {
-                callback.onFailure(throwable);
+                statusSettableFuture.setException(throwable);
             }
-        };
-        orchestratorPlugin.getStatus(deploymentContext, esCallback);
+        });
+        return statusSettableFuture.get();
+    }
+
+    /**
+     * Get the current deployment status for a topology.
+     *
+     * @param deployment deployment for which we want the status.
+     * @param callback that will be called when status is available
+     * @return The status of the topology.
+     * @throws alien4cloud.paas.exception.OrchestratorDisabledException In case the cloud selected for the topology is disabled.
+     */
+    public void getDeploymentStatus(final Deployment deployment, final IPaaSCallback<DeploymentStatus> callback) throws OrchestratorDisabledException {
+        deploymentLockService.doWithDeploymentReadLock(deployment.getOrchestratorDeploymentId(), () -> {
+            if (deployment == null) {
+                callback.onSuccess(DeploymentStatus.UNDEPLOYED);
+                return null;
+            }
+            IOrchestratorPlugin orchestratorPlugin = orchestratorPluginService.getOrFail(deployment.getOrchestratorId());
+
+            PaaSDeploymentContext deploymentContext = new PaaSDeploymentContext(deployment, getRuntimeTopology(deployment.getId()), null);
+            IPaaSCallback<DeploymentStatus> esCallback = new IPaaSCallback<DeploymentStatus>() {
+                @Override
+                public void onSuccess(DeploymentStatus data) {
+                    callback.onSuccess(data);
+                }
+
+                @Override
+                public void onFailure(Throwable throwable) {
+                    callback.onFailure(throwable);
+                }
+            };
+            orchestratorPlugin.getStatus(deploymentContext, esCallback);
+            return null;
+        });
     }
 
     /**
@@ -132,7 +145,7 @@ public class DeploymentRuntimeStateService {
             return;
         }
         DeploymentTopology runtimeTopology = alienMonitorDao.findById(DeploymentTopology.class, deployment.getId());
-        PaaSTopologyDeploymentContext deploymentContext = deploymentContextService.buildTopologyDeploymentContext(deployment,
+        PaaSTopologyDeploymentContext deploymentContext = deploymentContextService.buildTopologyDeploymentContext(null, deployment,
                 deploymentTopologyService.getLocations(runtimeTopology), runtimeTopology);
         IOrchestratorPlugin orchestratorPlugin = orchestratorPluginService.getOrFail(deployment.getOrchestratorId());
         orchestratorPlugin.getInstancesInformation(deploymentContext, callback);
@@ -149,10 +162,11 @@ public class DeploymentRuntimeStateService {
     public GetMultipleDataResult<?> getDeploymentEvents(String applicationEnvironmentId, int from, int size) {
         Deployment deployment = deploymentService.getActiveDeploymentOrFail(applicationEnvironmentId);
         String index = alienMonitorDao.getIndexForType(AbstractMonitorEvent.class);
-        QueryHelper.SearchQueryHelperBuilder searchQueryHelperBuilder = queryHelper.buildSearchQuery(index)
+
+        QueryHelper.ISearchQueryBuilderHelper searchQueryHelperBuilder = queryHelper.buildQuery()
                 .types(PaaSDeploymentStatusMonitorEvent.class, PaaSInstanceStateMonitorEvent.class, PaaSMessageMonitorEvent.class,
                         PaaSInstancePersistentResourceMonitorEvent.class)
-                .filters(MapUtil.newHashMap(new String[] { "deploymentId" }, new String[][] { new String[] { deployment.getId() } }))
+                .filters(MapUtil.newHashMap(new String[] { "deploymentId" }, new String[][] { new String[] { deployment.getId() } })).prepareSearch(index)
                 .fieldSort("_timestamp", true);
         return alienMonitorDao.search(searchQueryHelperBuilder, from, size);
     }

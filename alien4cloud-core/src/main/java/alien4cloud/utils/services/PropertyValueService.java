@@ -1,13 +1,13 @@
 package alien4cloud.utils.services;
 
 import alien4cloud.exception.InvalidArgumentException;
-import alien4cloud.model.components.PropertyDefinition;
+import org.alien4cloud.tosca.model.definitions.PropertyDefinition;
 import alien4cloud.paas.exception.NotSupportedException;
-import alien4cloud.tosca.normative.IPropertyType;
-import alien4cloud.tosca.normative.InvalidPropertyValueException;
-import alien4cloud.tosca.normative.ScalarType;
-import alien4cloud.tosca.normative.ScalarUnit;
-import alien4cloud.tosca.normative.ToscaType;
+import org.alien4cloud.tosca.normative.types.IPropertyType;
+import org.alien4cloud.tosca.exceptions.InvalidPropertyValueException;
+import org.alien4cloud.tosca.normative.types.ScalarType;
+import org.alien4cloud.tosca.normative.primitives.ScalarUnit;
+import org.alien4cloud.tosca.normative.types.ToscaTypes;
 import alien4cloud.utils.MapUtil;
 import java.util.List;
 import java.util.Map;
@@ -55,8 +55,8 @@ public class PropertyValueService {
         }
     }
 
-    private static String getValueInUnit(String propertyValue, String unit, boolean ceil, String toscaType) {
-        IPropertyType type = ToscaType.fromYamlTypeName(toscaType);
+    public static String getValueInUnit(String propertyValue, String unit, boolean ceil, String toscaType) {
+        IPropertyType type = ToscaTypes.fromYamlTypeName(toscaType);
         if (type instanceof ScalarType) {
             try {
                 ScalarUnit scalarUnit = ((ScalarType) type).parse(propertyValue);

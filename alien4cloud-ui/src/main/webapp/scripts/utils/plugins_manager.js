@@ -16,7 +16,15 @@ define(function (require) {
       var self = this;
       var deferred = $.Deferred();
 
-      $.ajax({ url: '/rest/latest/modules' }).then(function(data) {
+      document.getElementById('alien-plugins-loading-box').hidden = false;
+      var loadingBar = document.getElementById('alien-plugins-loading-bar');
+      var loadingName = document.getElementById('alien-plugins-loading-file');
+
+      $.ajax({ url: '/rest/latest/modules', dataType : 'json', timeout : 10000 }).error(function(xhr, error) {
+        loadingName.innerHTML = 'Failed to request plugins from server: ' + error;
+        loadingBar.className = 'progress-bar progress-bar-danger';
+        loadingBar.style.width = '100%';
+      }).then(function(data) {
         self.plugins = data;
         // init returns the list of entry points for the plugins.
         var entryPoints = [];
@@ -26,15 +34,19 @@ define(function (require) {
         if(pluginCount === 0) {
           deferred.resolve();
         } else {
-          _.each(self.plugins, function(value, key){
+          _.each(self.plugins, function(value, key) {
             // load the plugins entry points.
             entryPoints.push(value.entryPoint);
+            loadingName.innerHTML = key;
             pluginNames.push(key);
             // create plugin sandbox
             self.sandbox(key, value.entryPoint, function() {
               loadedPlugins++;
+              loadingBar.style.width = loadedPlugins * 100 / pluginCount + '%';
+
               if(loadedPlugins === pluginCount) {
                 // all plugins are loaded.
+                window.alienLoadingFile = undefined;
                 deferred.resolve();
               }
             });
@@ -57,7 +69,8 @@ define(function (require) {
 
       context.localDefined = {};
       context.localDefined[entryPoint] = {};
-      window[namespace] = { // register the plugin namespace to define elements in the right context
+      // register the plugin namespace to define elements in the right context
+      window[namespace] = {
         define: function(name, deps, callback) {
           // same define function as requirejs. We just enforce the context to be the plugin's one.
           if (typeof name !== 'string') {
@@ -84,7 +97,6 @@ define(function (require) {
             }
           }
 
-          // console.log('define module', context, name, deps, callback);
           // that's the difference with require js function...
           context.defQueue.push([name, deps, callback]);
           context.localDefined[name] = {};
@@ -109,7 +121,8 @@ define(function (require) {
       if(_.defined(this.plugins[pluginName])) {
         return this.plugins[pluginName].base;
       }
-      return ''; // the plugin has no defined base
+      // the plugin has no defined base
+      return '';
     },
 
     //register a translation file

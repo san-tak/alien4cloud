@@ -2,6 +2,7 @@ package alien4cloud.suggestions.services;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -14,12 +15,33 @@ import java.util.Set;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
+import javax.inject.Inject;
 
-import lombok.extern.slf4j.Slf4j;
-
+import org.alien4cloud.tosca.catalog.index.IToscaTypeSearchService;
+import org.alien4cloud.tosca.model.definitions.AbstractPropertyValue;
+import org.alien4cloud.tosca.model.definitions.FilterDefinition;
+import org.alien4cloud.tosca.model.definitions.NodeFilter;
+import org.alien4cloud.tosca.model.definitions.PropertyConstraint;
+import org.alien4cloud.tosca.model.definitions.PropertyDefinition;
+import org.alien4cloud.tosca.model.definitions.RequirementDefinition;
+import org.alien4cloud.tosca.model.definitions.ScalarPropertyValue;
+import org.alien4cloud.tosca.model.definitions.constraints.EqualConstraint;
+import org.alien4cloud.tosca.model.definitions.constraints.ValidValuesConstraint;
+import org.alien4cloud.tosca.model.templates.Capability;
+import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.templates.RelationshipTemplate;
+import org.alien4cloud.tosca.model.templates.Topology;
+import org.alien4cloud.tosca.model.types.AbstractInheritableToscaType;
+import org.alien4cloud.tosca.model.types.AbstractToscaType;
+import org.alien4cloud.tosca.model.types.CapabilityType;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.model.types.RelationshipType;
+import org.alien4cloud.tosca.normative.types.ToscaTypes;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
+
+import com.google.common.collect.Sets;
 
 import alien4cloud.dao.ElasticSearchDAO;
 import alien4cloud.dao.IGenericSearchDAO;
@@ -30,35 +52,14 @@ import alien4cloud.exception.NotFoundException;
 import alien4cloud.model.common.AbstractSuggestionEntry;
 import alien4cloud.model.common.SimpleSuggestionEntry;
 import alien4cloud.model.common.SuggestionEntry;
-import alien4cloud.model.components.AbstractPropertyValue;
-import alien4cloud.model.components.FilterDefinition;
-import alien4cloud.model.components.IndexedCapabilityType;
-import alien4cloud.model.components.IndexedInheritableToscaElement;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.components.IndexedRelationshipType;
-import alien4cloud.model.components.IndexedToscaElement;
-import alien4cloud.model.components.NodeFilter;
-import alien4cloud.model.components.PropertyConstraint;
-import alien4cloud.model.components.PropertyDefinition;
-import alien4cloud.model.components.RequirementDefinition;
-import alien4cloud.model.components.ScalarPropertyValue;
-import alien4cloud.model.components.constraints.EqualConstraint;
-import alien4cloud.model.components.constraints.ValidValuesConstraint;
-import alien4cloud.model.topology.Capability;
-import alien4cloud.model.topology.NodeTemplate;
-import alien4cloud.model.topology.RelationshipTemplate;
-import alien4cloud.model.topology.Topology;
 import alien4cloud.tosca.model.ArchiveRoot;
-import alien4cloud.tosca.normative.ToscaType;
 import alien4cloud.tosca.parser.ParsingContext;
 import alien4cloud.tosca.parser.ParsingError;
 import alien4cloud.tosca.parser.ParsingErrorLevel;
 import alien4cloud.tosca.parser.ParsingResult;
 import alien4cloud.tosca.parser.impl.ErrorCode;
 import alien4cloud.utils.YamlParserUtil;
-
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Component
@@ -66,6 +67,8 @@ public class SuggestionService {
 
     @Resource(name = "alien-es-dao")
     private IGenericSearchDAO alienDAO;
+    @Inject
+    private IToscaTypeSearchService toscaTypeSearchService;
 
     /* The Levenshtein distance is a string metric for measuring the difference between two sequences. */
     private static final double MIN_JAROWINKLER = 0.0;
@@ -107,7 +110,7 @@ public class SuggestionService {
     }
 
     private AbstractSuggestionEntry checkProperty(String nodePrefix, String propertyName, String propertyTextValue,
-            Class<? extends IndexedInheritableToscaElement> type, String elementId, ParsingContext context) {
+            Class<? extends AbstractInheritableToscaType> type, String elementId, ParsingContext context) {
         AbstractSuggestionEntry suggestionEntry = getSuggestionEntry(ElasticSearchDAO.TOSCA_ELEMENT_INDEX, type.getSimpleName().toLowerCase(), elementId,
                 propertyName);
         if (suggestionEntry != null) {
@@ -140,7 +143,7 @@ public class SuggestionService {
         return suggestionEntry;
     }
 
-    private void checkProperties(String nodePrefix, Map<String, AbstractPropertyValue> propertyValueMap, Class<? extends IndexedInheritableToscaElement> type,
+    private void checkProperties(String nodePrefix, Map<String, AbstractPropertyValue> propertyValueMap, Class<? extends AbstractInheritableToscaType> type,
             String elementId, ParsingContext context) {
         if (MapUtils.isNotEmpty(propertyValueMap)) {
             for (Map.Entry<String, AbstractPropertyValue> propertyValueEntry : propertyValueMap.entrySet()) {
@@ -167,7 +170,7 @@ public class SuggestionService {
                 NodeTemplate nodeTemplate = nodeTemplateEntry.getValue();
                 String nodeName = nodeTemplateEntry.getKey();
                 if (MapUtils.isNotEmpty(nodeTemplate.getProperties())) {
-                    checkProperties(nodeName, nodeTemplate.getProperties(), IndexedNodeType.class, nodeTemplate.getType(), context);
+                    checkProperties(nodeName, nodeTemplate.getProperties(), NodeType.class, nodeTemplate.getType(), context);
                 }
                 Map<String, Capability> capabilityMap = nodeTemplate.getCapabilities();
                 if (MapUtils.isNotEmpty(capabilityMap)) {
@@ -175,7 +178,7 @@ public class SuggestionService {
                         String capabilityName = capabilityEntry.getKey();
                         Capability capability = capabilityEntry.getValue();
                         if (MapUtils.isNotEmpty(capability.getProperties())) {
-                            checkProperties(nodeName + ".capabilities." + capabilityName, capability.getProperties(), IndexedCapabilityType.class,
+                            checkProperties(nodeName + ".capabilities." + capabilityName, capability.getProperties(), CapabilityType.class,
                                     capability.getType(), context);
                         }
                     }
@@ -186,7 +189,7 @@ public class SuggestionService {
                         String relationshipName = relationshipEntry.getKey();
                         RelationshipTemplate relationship = relationshipEntry.getValue();
                         if (MapUtils.isNotEmpty(relationship.getProperties())) {
-                            checkProperties(nodeName + ".relationships." + relationshipName, relationship.getProperties(), IndexedRelationshipType.class,
+                            checkProperties(nodeName + ".relationships." + relationshipName, relationship.getProperties(), RelationshipType.class,
                                     relationship.getType(), context);
                         }
                     }
@@ -194,10 +197,10 @@ public class SuggestionService {
             }
         }
         if (archiveRoot.hasToscaTypes()) {
-            Map<String, IndexedNodeType> allNodeTypes = archiveRoot.getNodeTypes();
+            Map<String, NodeType> allNodeTypes = archiveRoot.getNodeTypes();
             if (MapUtils.isNotEmpty(allNodeTypes)) {
-                for (Map.Entry<String, IndexedNodeType> nodeTypeEntry : allNodeTypes.entrySet()) {
-                    IndexedNodeType nodeType = nodeTypeEntry.getValue();
+                for (Map.Entry<String, NodeType> nodeTypeEntry : allNodeTypes.entrySet()) {
+                    NodeType nodeType = nodeTypeEntry.getValue();
                     if (nodeType.getRequirements() != null && !nodeType.getRequirements().isEmpty()) {
                         for (RequirementDefinition requirementDefinition : nodeType.getRequirements()) {
                             NodeFilter nodeFilter = requirementDefinition.getNodeFilter();
@@ -208,7 +211,7 @@ public class SuggestionService {
                                         FilterDefinition filterDefinition = capabilityFilterEntry.getValue();
                                         for (Map.Entry<String, List<PropertyConstraint>> constraintEntry : filterDefinition.getProperties().entrySet()) {
                                             List<PropertyConstraint> constraints = constraintEntry.getValue();
-                                            checkPropertyConstraints("node_filter.capabilities", IndexedCapabilityType.class, capabilityFilterEntry.getKey(),
+                                            checkPropertyConstraints("node_filter.capabilities", CapabilityType.class, capabilityFilterEntry.getKey(),
                                                     constraintEntry.getKey(), constraints, context);
                                         }
                                     }
@@ -230,8 +233,7 @@ public class SuggestionService {
      * @param elementId element id
      * @param propertyName property's name
      */
-    public void createSuggestionEntry(String index, Class<? extends IndexedToscaElement> type, Set<String> initialValues, String elementId,
-            String propertyName) {
+    public void createSuggestionEntry(String index, Class<? extends AbstractToscaType> type, Set<String> initialValues, String elementId, String propertyName) {
         createSuggestionEntry(index, type.getSimpleName().toLowerCase(), initialValues, elementId, propertyName);
     }
 
@@ -261,7 +263,7 @@ public class SuggestionService {
         alienDAO.save(suggestionEntry);
     }
 
-    private void checkPropertyConstraints(String prefix, Class<? extends IndexedInheritableToscaElement> type, String elementId, String propertyName,
+    private void checkPropertyConstraints(String prefix, Class<? extends AbstractInheritableToscaType> type, String elementId, String propertyName,
             List<PropertyConstraint> constraints, ParsingContext context) {
         if (constraints != null && !constraints.isEmpty()) {
             for (PropertyConstraint propertyConstraint : constraints) {
@@ -269,7 +271,7 @@ public class SuggestionService {
                     EqualConstraint equalConstraint = (EqualConstraint) propertyConstraint;
                     String valueToCheck = equalConstraint.getEqual();
                     if (checkProperty(prefix, propertyName, valueToCheck, type, elementId, context) == null) {
-                        createSuggestionEntry(ElasticSearchDAO.TOSCA_ELEMENT_INDEX, IndexedCapabilityType.class, Sets.newHashSet(valueToCheck), elementId,
+                        createSuggestionEntry(ElasticSearchDAO.TOSCA_ELEMENT_INDEX, CapabilityType.class, Sets.newHashSet(valueToCheck), elementId,
                                 propertyName);
                     }
                 } else if (propertyConstraint instanceof ValidValuesConstraint) {
@@ -284,7 +286,7 @@ public class SuggestionService {
                             }
                         }
                         if (foundSuggestion == null) {
-                            createSuggestionEntry(ElasticSearchDAO.TOSCA_ELEMENT_INDEX, IndexedCapabilityType.class,
+                            createSuggestionEntry(ElasticSearchDAO.TOSCA_ELEMENT_INDEX, CapabilityType.class,
                                     Sets.newHashSet(validValuesConstraint.getValidValues()), elementId, propertyName);
                         }
                     }
@@ -299,26 +301,28 @@ public class SuggestionService {
      * @param suggestionEntry entry of suggestion
      */
     public void setSuggestionIdOnPropertyDefinition(SuggestionEntry suggestionEntry) {
-        Map<String, String[]> filters = Maps.newHashMap();
-        filters.put("elementId", new String[] { suggestionEntry.getTargetElementId() });
-        Class<? extends IndexedInheritableToscaElement> targetClass = (Class<? extends IndexedInheritableToscaElement>) alienDAO.getTypesToClasses()
+        Class<? extends AbstractInheritableToscaType> targetClass = (Class<? extends AbstractInheritableToscaType>) alienDAO.getTypesToClasses()
                 .get(suggestionEntry.getEsType());
-        GetMultipleDataResult<? extends IndexedInheritableToscaElement> result = alienDAO.find(targetClass, filters, Integer.MAX_VALUE);
-        if (result.getData() != null && result.getData().length > 0) {
-            for (IndexedInheritableToscaElement targetElement : result.getData()) {
+
+        // FIXME what if targetClass is null ?
+        Object array = toscaTypeSearchService.findAll(targetClass, suggestionEntry.getTargetElementId());
+        if (array != null) {
+            int length = Array.getLength(array);
+            for (int i = 0; i < length; i++) {
+                AbstractInheritableToscaType targetElement = ((AbstractInheritableToscaType) Array.get(array, i));
                 PropertyDefinition propertyDefinition = targetElement.getProperties().get(suggestionEntry.getTargetProperty());
                 if (propertyDefinition == null) {
                     throw new NotFoundException(
                             "Property [" + suggestionEntry.getTargetProperty() + "] not found for element [" + suggestionEntry.getTargetElementId() + "]");
                 } else {
                     switch (propertyDefinition.getType()) {
-                    case ToscaType.VERSION:
-                    case ToscaType.STRING:
+                    case ToscaTypes.VERSION:
+                    case ToscaTypes.STRING:
                         propertyDefinition.setSuggestionId(suggestionEntry.getId());
                         alienDAO.save(targetElement);
                         break;
-                    case ToscaType.LIST:
-                    case ToscaType.MAP:
+                    case ToscaTypes.LIST:
+                    case ToscaTypes.MAP:
                         PropertyDefinition entrySchema = propertyDefinition.getEntrySchema();
                         if (entrySchema != null) {
                             entrySchema.setSuggestionId(suggestionEntry.getId());
@@ -379,6 +383,9 @@ public class SuggestionService {
         // Compute the match score between the suggestion and the normalized value
         String normalizedSuggestion = normalizeTextForMatching(suggestion);
         double distance = StringUtils.getJaroWinklerDistance(normalizedValue, normalizedSuggestion);
+        if (distance == 1 && !normalizedValue.equals(normalizedSuggestion)) {
+            distance = 0.999;
+        }
         if (distance > minJarowinkler) {
             return new MatchedSuggestion(distance, suggestion);
         } else {

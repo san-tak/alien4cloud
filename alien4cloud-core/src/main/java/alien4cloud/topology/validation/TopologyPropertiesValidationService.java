@@ -1,39 +1,42 @@
 package alien4cloud.topology.validation;
 
-import alien4cloud.component.CSARRepositorySearchService;
-import alien4cloud.model.components.AbstractPropertyValue;
-import alien4cloud.model.components.ComplexPropertyValue;
-import alien4cloud.model.components.FunctionPropertyValue;
-import alien4cloud.model.components.IndexedCapabilityType;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.components.IndexedRelationshipType;
-import alien4cloud.model.components.ListPropertyValue;
-import alien4cloud.model.components.PropertyDefinition;
-import alien4cloud.model.components.ScalarPropertyValue;
-import alien4cloud.model.topology.Capability;
-import alien4cloud.model.topology.NodeTemplate;
-import alien4cloud.model.topology.RelationshipTemplate;
-import alien4cloud.model.topology.Topology;
 import alien4cloud.paas.exception.NotSupportedException;
-import alien4cloud.paas.function.FunctionEvaluator;
 import alien4cloud.topology.task.PropertiesTask;
 import alien4cloud.topology.task.ScalableTask;
 import alien4cloud.topology.task.TaskCode;
 import alien4cloud.topology.task.TaskLevel;
-import alien4cloud.tosca.normative.NormativeComputeConstants;
+import alien4cloud.tosca.context.ToscaContext;
+import alien4cloud.utils.PropertyUtil;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-import javax.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.alien4cloud.tosca.model.definitions.AbstractPropertyValue;
+import org.alien4cloud.tosca.model.definitions.ComplexPropertyValue;
+import org.alien4cloud.tosca.model.definitions.FunctionPropertyValue;
+import org.alien4cloud.tosca.model.definitions.ListPropertyValue;
+import org.alien4cloud.tosca.model.definitions.PropertyDefinition;
+import org.alien4cloud.tosca.model.definitions.ScalarPropertyValue;
+import org.alien4cloud.tosca.model.templates.Capability;
+import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.templates.RelationshipTemplate;
+import org.alien4cloud.tosca.model.templates.Topology;
+import org.alien4cloud.tosca.model.types.CapabilityType;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.model.types.RelationshipType;
+import org.alien4cloud.tosca.normative.constants.NormativeCapabilityTypes;
+import org.alien4cloud.tosca.normative.constants.NormativeComputeConstants;
+import org.alien4cloud.tosca.utils.FunctionEvaluator;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.elasticsearch.common.collect.Lists;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+
+import static alien4cloud.utils.AlienUtils.safe;
 
 /**
  * Performs validation of the properties
@@ -41,9 +44,6 @@ import org.springframework.stereotype.Component;
 @Component
 @Slf4j
 public class TopologyPropertiesValidationService {
-    @Resource
-    private CSARRepositorySearchService csarRepoSearchService;
-
     /**
      * Validate that the properties values in the topology are matching the property definitions (required & constraints).
      * Skips properties defined as get_input
@@ -80,86 +80,55 @@ public class TopologyPropertiesValidationService {
         // create task by nodetemplate
         for (Map.Entry<String, NodeTemplate> nodeTempEntry : nodeTemplates.entrySet()) {
             NodeTemplate nodeTemplate = nodeTempEntry.getValue();
-            IndexedNodeType relatedIndexedNodeType = csarRepoSearchService.getRequiredElementInDependencies(IndexedNodeType.class, nodeTemplate.getType(),
-                    topology.getDependencies());
+            NodeType relatedIndexedNodeType = ToscaContext.get(NodeType.class, nodeTemplate.getType());
             // do pass if abstract node
             if (relatedIndexedNodeType.isAbstract()) {
                 continue;
             }
-
-            // Define a task regarding properties
-            PropertiesTask task = new PropertiesTask();
-            task.setNodeTemplateName(nodeTempEntry.getKey());
-            task.setComponent(relatedIndexedNodeType);
-            task.setCode(TaskCode.PROPERTIES);
-            task.setProperties(Maps.<TaskLevel, List<String>> newHashMap());
-
-            // Check the properties of node template
-            if (MapUtils.isNotEmpty(nodeTemplate.getProperties())) {
-                addRequiredPropertyIdToTaskProperties(nodeTemplate.getProperties(), relatedIndexedNodeType.getProperties(), task, skipInputProperties);
-            }
-
-            // Check relationships PD
-            if (MapUtils.isNotEmpty(nodeTemplate.getRelationships())) {
-                Collection<RelationshipTemplate> relationships = nodeTemplate.getRelationships().values();
-                for (RelationshipTemplate relationship : relationships) {
-                    if (relationship.getProperties() == null || relationship.getProperties().isEmpty()) {
-                        continue;
-                    }
-                    addRequiredPropertyIdToTaskProperties(relationship.getProperties(), getRelationshipPropertyDefinition(topology, nodeTemplate), task,
-                            skipInputProperties);
-                }
-            }
-
-            // Check capabilities PD
-            if (MapUtils.isNotEmpty(nodeTemplate.getCapabilities())) {
-                Collection<Capability> capabilities = nodeTemplate.getCapabilities().values();
-                for (Capability capability : capabilities) {
-                    if (capability.getProperties() == null || capability.getProperties().isEmpty()) {
-                        continue;
-                    }
-                    addRequiredPropertyIdToTaskProperties(capability.getProperties(), getCapabilitiesPropertyDefinition(topology, nodeTemplate), task,
-                            skipInputProperties);
-                    if (capability.getType().equals(NormativeComputeConstants.SCALABLE_CAPABILITY_TYPE)) {
-                        Map<String, AbstractPropertyValue> scalableProperties = capability.getProperties();
-                        verifyScalableProperties(scalableProperties, toReturnTaskList, nodeTempEntry.getKey(), skipInputProperties);
-                    }
-                }
-            }
-
-            if (MapUtils.isNotEmpty(task.getProperties())) {
-                toReturnTaskList.add(task);
-            }
+            validateNodeTemplate(toReturnTaskList, relatedIndexedNodeType, nodeTemplate, nodeTempEntry.getKey(), skipInputProperties);
         }
         return toReturnTaskList.isEmpty() ? null : toReturnTaskList;
     }
 
-    private Map<String, PropertyDefinition> getCapabilitiesPropertyDefinition(Topology topology, NodeTemplate nodeTemplate) {
-        Map<String, PropertyDefinition> relatedProperties = Maps.newTreeMap();
+    public void validateNodeTemplate(List<PropertiesTask> toReturnTaskList, NodeType relatedIndexedNodeType, NodeTemplate nodeTemplate, String nodeTempalteName,
+            boolean skipInputProperties) {
+        // Define a task regarding properties
+        PropertiesTask task = new PropertiesTask();
+        task.setNodeTemplateName(nodeTempalteName);
+        task.setComponent(relatedIndexedNodeType);
+        task.setCode(TaskCode.PROPERTIES);
+        task.setProperties(Maps.newHashMap());
 
-        for (Map.Entry<String, Capability> capabilityEntry : nodeTemplate.getCapabilities().entrySet()) {
-            IndexedCapabilityType indexedCapabilityType = csarRepoSearchService.getRequiredElementInDependencies(IndexedCapabilityType.class,
-                    capabilityEntry.getValue().getType(), topology.getDependencies());
-            if (indexedCapabilityType.getProperties() != null && !indexedCapabilityType.getProperties().isEmpty()) {
-                relatedProperties.putAll(indexedCapabilityType.getProperties());
+        // Check the properties of node template
+        if (MapUtils.isNotEmpty(nodeTemplate.getProperties())) {
+            addRequiredPropertyIdToTaskProperties(null, nodeTemplate.getProperties(), relatedIndexedNodeType.getProperties(), task, skipInputProperties);
+        }
+
+        // Check relationships PD
+        for (Map.Entry<String, RelationshipTemplate> relationshipEntry : safe(nodeTemplate.getRelationships()).entrySet()) {
+            RelationshipTemplate relationship = relationshipEntry.getValue();
+            if (relationship.getProperties() == null || relationship.getProperties().isEmpty()) {
+                continue;
+            }
+            addRequiredPropertyIdToTaskProperties("relationships[" + relationshipEntry.getKey() + "]", relationship.getProperties(),
+                    safe(ToscaContext.getOrFail(RelationshipType.class, relationshipEntry.getValue().getType()).getProperties()), task, skipInputProperties);
+        }
+        for (Map.Entry<String, Capability> capabilityEntry : safe(nodeTemplate.getCapabilities()).entrySet()) {
+            Capability capability = capabilityEntry.getValue();
+            if (capability.getProperties() == null || capability.getProperties().isEmpty()) {
+                continue;
+            }
+            addRequiredPropertyIdToTaskProperties("capabilities[" + capabilityEntry.getKey() + "]", capability.getProperties(),
+                    safe(ToscaContext.getOrFail(CapabilityType.class, capabilityEntry.getValue().getType()).getProperties()), task, skipInputProperties);
+            if (capability.getType().equals(NormativeCapabilityTypes.SCALABLE)) {
+                Map<String, AbstractPropertyValue> scalableProperties = capability.getProperties();
+                verifyScalableProperties(scalableProperties, toReturnTaskList, nodeTempalteName, skipInputProperties);
             }
         }
 
-        return relatedProperties;
-    }
-
-    private Map<String, PropertyDefinition> getRelationshipPropertyDefinition(Topology topology, NodeTemplate nodeTemplate) {
-        Map<String, PropertyDefinition> relatedProperties = Maps.newTreeMap();
-
-        for (Map.Entry<String, RelationshipTemplate> relationshipTemplateEntry : nodeTemplate.getRelationships().entrySet()) {
-            IndexedRelationshipType indexedRelationshipType = csarRepoSearchService.getRequiredElementInDependencies(IndexedRelationshipType.class,
-                    relationshipTemplateEntry.getValue().getType(), topology.getDependencies());
-            if (indexedRelationshipType.getProperties() != null && !indexedRelationshipType.getProperties().isEmpty()) {
-                relatedProperties.putAll(indexedRelationshipType.getProperties());
-            }
+        if (MapUtils.isNotEmpty(task.getProperties())) {
+            toReturnTaskList.add(task);
         }
-
-        return relatedProperties;
     }
 
     private void verifyScalableProperties(Map<String, AbstractPropertyValue> scalableProperties, List<PropertiesTask> toReturnTaskList, String nodeTemplateId,
@@ -209,7 +178,7 @@ public class TopologyPropertiesValidationService {
             Set<String> errorProperties) {
         String rawValue = null;
         try {
-            rawValue = FunctionEvaluator.getScalarValue(scalableProperties.get(propertyToVerify));
+            rawValue = PropertyUtil.getScalarValue(scalableProperties.get(propertyToVerify));
         } catch (NotSupportedException e1) {
             // the value is a function (get_input normally), this means the input is not yet filled.
         }
@@ -238,35 +207,39 @@ public class TopologyPropertiesValidationService {
         task.getProperties().get(TaskLevel.REQUIRED).add(propertyName);
     }
 
-    private void addRequiredPropertyIdToTaskProperties(Map<String, AbstractPropertyValue> properties, Map<String, PropertyDefinition> relatedProperties,
-            PropertiesTask task, boolean skipInputProperties) {
+    private void addRequiredPropertyIdToTaskProperties(String prefix, Map<String, AbstractPropertyValue> properties,
+            Map<String, PropertyDefinition> relatedProperties, PropertiesTask task, boolean skipInputProperties) {
         for (Map.Entry<String, AbstractPropertyValue> propertyEntry : properties.entrySet()) {
             PropertyDefinition propertyDef = relatedProperties.get(propertyEntry.getKey());
+            String propertyErrorKey = prefix == null ? propertyEntry.getKey() : prefix + "." + propertyEntry.getKey();
             AbstractPropertyValue value = propertyEntry.getValue();
             if (propertyDef != null && propertyDef.isRequired()) {
                 if (value == null) {
-                    addRequiredPropertyError(task, propertyEntry.getKey());
+                    addRequiredPropertyError(task, propertyErrorKey);
                 } else if (value instanceof ScalarPropertyValue) {
                     String propertyValue = ((ScalarPropertyValue) value).getValue();
                     if (StringUtils.isBlank(propertyValue)) {
-                        addRequiredPropertyError(task, propertyEntry.getKey());
+                        addRequiredPropertyError(task, propertyErrorKey);
                     }
                 } else if (value instanceof ComplexPropertyValue) {
                     Map<String, Object> mapValue = ((ComplexPropertyValue) value).getValue();
                     if (MapUtils.isEmpty(mapValue)) {
-                        addRequiredPropertyError(task, propertyEntry.getKey());
+                        addRequiredPropertyError(task, propertyErrorKey);
                     }
                 } else if (value instanceof ListPropertyValue) {
                     List<Object> listValue = ((ListPropertyValue) value).getValue();
                     if (listValue.isEmpty()) {
-                        addRequiredPropertyError(task, propertyEntry.getKey());
+                        addRequiredPropertyError(task, propertyErrorKey);
                     }
+                } else if (FunctionEvaluator.containGetSecretFunction(value)) {
+                    // this is a get_secret function, we should not validate the get_secret here
+                     continue;
                 } else if (skipInputProperties) {
                     // this is a get_input funtion.
                     // get_input Will be validated later on
                     continue;
                 } else {
-                    addRequiredPropertyError(task, propertyEntry.getKey());
+                    addRequiredPropertyError(task, propertyErrorKey);
                 }
             }
         }

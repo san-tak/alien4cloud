@@ -9,9 +9,21 @@ define(function(require) {
     }
   ]);
 
+  modules.get('a4c-orchestrators', ['a4c-common']).factory('locationSecretService', ['$alresource',
+    function($alresource) {
+      return $alresource('rest/latest/orchestrators/:orchestratorId/locations/:locationId/secret-conf');
+    }
+  ]);
+
   modules.get('a4c-orchestrators', ['a4c-common']).factory('locationResourcesService', ['$alresource',
     function($alresource) {
-      return $alresource('rest/latest/orchestrators/:orchestratorId/locations/:locationId/resources/:id');
+      return $alresource('rest/latest/orchestrators/:orchestratorId/locations/:locationId/resources/:id/:extendUrl');
+    }
+  ]);
+
+  modules.get('a4c-orchestrators', ['a4c-common']).factory('locationPoliciesService', ['$alresource',
+    function($alresource) {
+      return $alresource('rest/latest/orchestrators/:orchestratorId/locations/:locationId/policies/:id/:extendUrl');
     }
   ]);
 
@@ -21,16 +33,22 @@ define(function(require) {
     }
   ]);
 
+  modules.get('a4c-orchestrators', ['a4c-common']).factory('locationPoliciesPropertyService', ['$alresource',
+    function($alresource) {
+      return $alresource('rest/latest/orchestrators/:orchestratorId/locations/:locationId/policies/:id/template/properties');
+    }
+  ]);
+
   modules.get('a4c-orchestrators', ['a4c-common']).factory('locationResourcesCapabilityPropertyService', ['$alresource',
     function($alresource) {
       return $alresource('rest/latest/orchestrators/:orchestratorId/locations/:locationId/resources/:id/template/capabilities/:capabilityName/properties');
     }
   ]);
-  
+
   modules.get('a4c-orchestrators', [ 'a4c-common' ]).factory('locationResourcesPortabilityService', ['$alresource',
     function($alresource) {
       return $alresource('rest/latest/orchestrators/:orchestratorId/locations/:locationId/resources/:id/template/portability');
     }
   ]);
-  
+
 });

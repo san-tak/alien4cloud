@@ -10,27 +10,29 @@ import javax.servlet.http.HttpServletResponse;
 import javax.validation.Valid;
 
 import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Component;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.google.common.collect.Sets;
 
 import alien4cloud.audit.annotation.Audit;
 import alien4cloud.dao.model.FacetedSearchResult;
-import alien4cloud.dao.model.GetMultipleDataResult;
 import alien4cloud.rest.model.RestErrorBuilder;
 import alien4cloud.rest.model.RestErrorCode;
 import alien4cloud.rest.model.RestResponse;
 import alien4cloud.rest.model.RestResponseBuilder;
-import alien4cloud.security.ResourceRoleService;
-import alien4cloud.security.groups.GroupService;
 import alien4cloud.security.model.Role;
 import alien4cloud.security.model.User;
 import alien4cloud.security.users.IAlienUserDao;
 import alien4cloud.security.users.UserService;
-
-import com.google.common.collect.Sets;
 import io.swagger.annotations.ApiOperation;
 
 /**
@@ -40,16 +42,12 @@ import io.swagger.annotations.ApiOperation;
  */
 @Component
 @RestController
-@RequestMapping({"/rest/users", "/rest/v1/users", "/rest/latest/users"})
+@RequestMapping({ "/rest/users", "/rest/v1/users", "/rest/latest/users" })
 public class UserController {
     @Resource
     private IAlienUserDao alienUserDao;
     @Resource
     private UserService userService;
-    @Resource
-    private GroupService groupService;
-    @Resource
-    private ResourceRoleService resourceRoleService;
 
     /**
      * Create a new user in the system.
@@ -60,7 +58,7 @@ public class UserController {
     @ApiOperation(value = "Create a new user in ALIEN.")
     @RequestMapping(method = RequestMethod.POST, consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasAuthority('ADMIN')")
-    @Audit
+    @Audit(bodyHiddenFields = { "password" } )
     public RestResponse<Void> create(@Valid @RequestBody CreateUserRequest request) {
         userService.createUser(request.getUsername(), request.getEmail(), request.getFirstName(), request.getLastName(), request.getRoles(),
                 request.getPassword());
@@ -70,7 +68,7 @@ public class UserController {
     @ApiOperation("Update an user by merging the userUpdateRequest into the existing user")
     @RequestMapping(value = "/{username}", method = RequestMethod.PUT, consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasAuthority('ADMIN')")
-    @Audit
+    @Audit(bodyHiddenFields = { "password" } )
     public RestResponse<Void> update(@PathVariable String username, @RequestBody UpdateUserRequest userUpdateRequest) {
         userService.updateUser(username, userUpdateRequest);
         return RestResponseBuilder.<Void> builder().build();
@@ -120,7 +118,7 @@ public class UserController {
      * Search for users.
      *
      * @param searchRequest The request that contains parameters of the search request.
-     * @return A {@link RestResponse} that contains a {@link GetMultipleDataResult} of {@link User}.
+     * @return A {@link RestResponse} that contains a {@link FacetedSearchResult} of {@link User}.
      */
     @ApiOperation(value = "Search for user's registered in alien.")
     @RequestMapping(value = "/search", method = RequestMethod.POST, consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
@@ -142,7 +140,7 @@ public class UserController {
     @PreAuthorize("hasAuthority('ADMIN')")
     @Audit
     public RestResponse<Void> deleteUser(@PathVariable String username, HttpServletResponse servletResponse) throws IOException, ClassNotFoundException {
-        if (username == null || username.isEmpty()) {
+        if (StringUtils.isBlank(username)) {
             return RestResponseBuilder.<Void> builder()
                     .error(RestErrorBuilder.builder(RestErrorCode.ILLEGAL_PARAMETER).message("username cannot be null or empty").build()).build();
         } else if (alienUserDao.find(username) == null) {
@@ -154,10 +152,7 @@ public class UserController {
                     .build();
         }
 
-        resourceRoleService.deleteUserRoles(username);
-        groupService.removeUserFromAllGroup(username);
-
-        alienUserDao.delete(username);
+        userService.deleteUser(username);
         return RestResponseBuilder.<Void> builder().build();
     }
 
@@ -202,12 +197,14 @@ public class UserController {
         if (username == null || username.isEmpty()) {
             return RestResponseBuilder.<Void> builder()
                     .error(RestErrorBuilder.builder(RestErrorCode.ILLEGAL_PARAMETER).message("username cannot be null or empty").build()).build();
-        } else if (userService.isAdmin(username) && userService.countAdminUser() == 1) {
+        }
+        // This checks that the role exists
+        String goodRoleToAdd = Role.getStringFormatedRole(role);
+        if (Role.ADMIN.equals(Role.valueOf(role)) && userService.isAdmin(username) && userService.countAdminUser() == 1) {
             servletResponse.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
             return RestResponseBuilder.<Void> builder().error(RestErrorBuilder.builder(RestErrorCode.DELETE_LAST_ADMIN_ROLE_ERROR)
                     .message("It's forbidden to remove the admin role of the last admin user.").build()).build();
         }
-        String goodRoleToAdd = Role.getStringFormatedRole(role);
         User user = userService.retrieveUser(username);
         String[] roles = user.getRoles();
         roles = ArrayUtils.removeElement(roles, goodRoleToAdd);

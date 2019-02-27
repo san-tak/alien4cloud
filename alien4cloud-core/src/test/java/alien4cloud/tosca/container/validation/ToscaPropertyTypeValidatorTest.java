@@ -9,15 +9,15 @@ import javax.validation.Validator;
 import org.junit.Assert;
 import org.junit.Test;
 
-import alien4cloud.model.components.PropertyDefinition;
-import alien4cloud.tosca.normative.ToscaType;
+import org.alien4cloud.tosca.model.definitions.PropertyDefinition;
+import org.alien4cloud.tosca.normative.types.ToscaTypes;
 
 public class ToscaPropertyTypeValidatorTest {
     private Validator validator = Validation.buildDefaultValidatorFactory().getValidator();;
 
     private PropertyDefinition createDefinitions() {
         PropertyDefinition propertyDefinition = new PropertyDefinition();
-        propertyDefinition.setType(ToscaType.STRING.toString());
+        propertyDefinition.setType(ToscaTypes.STRING.toString());
         return propertyDefinition;
     }
 

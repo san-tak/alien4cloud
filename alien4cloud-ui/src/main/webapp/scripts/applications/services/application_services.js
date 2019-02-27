@@ -18,10 +18,15 @@ define(function (require) {
       });
 
       var applicationActiveDeploymentDAO = $resource('rest/latest/applications/:applicationId/environments/:applicationEnvironmentId/active-deployment');
+      var applicationMonitoredDeploymentDAO = $resource('rest/latest/applications/:applicationId/environments/:applicationEnvironmentId/active-deployment-monitored');
+
+      var applicationSecretProviderConfigurationDAO = $resource('rest/latest/applications/:applicationId/environments/:applicationEnvironmentId/current-secret-provider-configurations');
+
+      var applicationRuntimeTopologyDAO = $resource('rest/latest/applications/:applicationId/environments/:applicationEnvironmentId/runtime-topology');
 
       var applicationDeploymentDAO = $resource('rest/latest/applications/:applicationId/environments/:applicationEnvironmentId/deployment', {}, {
         'undeploy': {
-          method: 'DELETE'
+          method: 'PUT'
         }
       });
 
@@ -31,8 +36,14 @@ define(function (require) {
         }
       });
 
-      var applicationStatus = $resource('rest/latest/applications/statuses', {}, {
-        'statuses': {
+      var applicationDeploymentUpdate = $resource('rest/latest/applications/:applicationId/environments/:applicationEnvironmentId/update-deployment', {}, {
+        'update': {
+          method: 'POST'
+        }
+      });
+
+      var envrironments = $resource('rest/latest/applications/environments', {}, {
+        'getAll': {
           method: 'POST'
         }
       });
@@ -162,14 +173,18 @@ define(function (require) {
         'remove': applicationDAO.remove,
         'update': applicationDAO.update,
         'getActiveDeployment': applicationActiveDeploymentDAO,
+        'getActiveMonitoredDeployment': applicationMonitoredDeploymentDAO,
+        'getSecretProviderConfigurationsForCurrentDeployment': applicationSecretProviderConfigurationDAO,
+        'getRuntimeTopology': applicationRuntimeTopologyDAO,
         'deployment': applicationDeploymentDAO,
+        'deploymentUpdate': applicationDeploymentUpdate.update,
         'deployApplication': applicationDeployment,
         'runtime': applicationRuntimeDAO,
         'scale': ApplicationScalingDAO.scale,
         'tags': applicationTags,
         'userRoles': manageAppUserRoles,
         'groupRoles': manageAppGroupRoles,
-        'applicationStatus': applicationStatus,
+        'envrironments': envrironments,
         'checkProperty': deploymentProperty.check,
         'getDeploymentSetup': applicationDeploymentSetupDAO.get,
         'updateDeploymentSetup': applicationDeploymentSetupDAO.update,

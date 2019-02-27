@@ -1,20 +1,19 @@
 package alien4cloud.tosca.serializer;
 
+import alien4cloud.paas.exception.NotSupportedException;
+import org.alien4cloud.tosca.model.definitions.*;
+import org.apache.commons.lang3.StringEscapeUtils;
+
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-import alien4cloud.model.components.AbstractPropertyValue;
-import alien4cloud.model.components.FunctionPropertyValue;
-import alien4cloud.model.components.PropertyValue;
-import alien4cloud.model.components.ScalarPropertyValue;
-import alien4cloud.paas.exception.NotSupportedException;
-
 public class ToscaPropertySerializerUtils {
 
     private static Pattern ESCAPE_PATTERN = Pattern.compile(".*[,:\\[\\]\\{\\}-].*");
+    private static Pattern VALID_YAML_PATTERN = Pattern.compile("[a-zA-Z0-9]+");
+    private static Pattern FLOAT_PATTERN = Pattern.compile("([0-9]+[.])?[0-9]+");
 
     public static String indent(int indentLevel) {
         StringBuilder buffer = new StringBuilder();
@@ -40,7 +39,12 @@ public class ToscaPropertySerializerUtils {
             }
             return formattedTextBuffer.toString();
         } else {
-            return text == null ? "" : text;
+            if (text == null) {
+                text = "";
+            } else if (!VALID_YAML_PATTERN.matcher(text).matches() && !FLOAT_PATTERN.matcher(text).matches()) {
+                text = "\"" + escapeDoubleQuotedString(text) + "\"";
+            }
+            return text;
         }
     }
 
@@ -48,11 +52,13 @@ public class ToscaPropertySerializerUtils {
         return ToscaPropertySerializerUtils.formatPropertyValue(true, indentLevel, propertyValue);
     }
 
-    public static String formatPropertyValue(boolean appendLf, int indentLevel, AbstractPropertyValue propertyValue) {
+    private static String formatPropertyValue(boolean appendLf, int indentLevel, AbstractPropertyValue propertyValue) {
         if (propertyValue instanceof PropertyValue) {
             return formatValue(appendLf, indentLevel, ((PropertyValue) propertyValue).getValue());
         } else if (propertyValue instanceof FunctionPropertyValue) {
-            return formatFunctionPropertyValue(appendLf, indentLevel, ((FunctionPropertyValue) propertyValue));
+            return formatFunctionPropertyValue(indentLevel, ((FunctionPropertyValue) propertyValue));
+        } else if (propertyValue instanceof ConcatPropertyValue) {
+            return formatConcatPropertyValue(indentLevel, ((ConcatPropertyValue) propertyValue));
         } else {
             throw new NotSupportedException("Do not support other types than PropertyValue or FunctionPropertyValue");
         }
@@ -72,13 +78,13 @@ public class ToscaPropertySerializerUtils {
         } else if (value instanceof List) {
             return formatListValue(indentLevel, (List<Object>) value);
         } else if (value instanceof PropertyValue) {
-            return formatPropertyValue(appendLf, indentLevel, (PropertyValue) value);
+            return formatPropertyValue(indentLevel, (PropertyValue) value);
         } else {
             throw new NotSupportedException("Do not support other types than string map and list");
         }
     }
 
-    private static String formatFunctionPropertyValue(boolean appendLf, int indentLevel, FunctionPropertyValue value) {
+    private static String formatFunctionPropertyValue(int indentLevel, FunctionPropertyValue value) {
         indentLevel++;
         StringBuilder buffer = new StringBuilder();
         if (value.getFunction().equals("get_input")) {
@@ -86,6 +92,24 @@ public class ToscaPropertySerializerUtils {
         } else {
             buffer.append("{ ").append(value.getFunction()).append(": [").append(ToscaSerializerUtils.getCsvToString(value.getParameters())).append("] }");
         }
+        return buffer.toString();
+    }
+
+    private static String formatConcatPropertyValue(int indentLevel, ConcatPropertyValue value) {
+        indentLevel++;
+        StringBuilder buffer = new StringBuilder().append("{ concat: [ ");
+
+        boolean first = true;
+        for (AbstractPropertyValue concatElement : value.getParameters()) {
+            if (first) {
+                first = false;
+            } else {
+                buffer.append(", ");
+            }
+            buffer.append(formatPropertyValue(0, concatElement));
+        }
+
+        buffer.append(" ] }");
         return buffer.toString();
     }
 
@@ -118,10 +142,13 @@ public class ToscaPropertySerializerUtils {
         return buffer.toString();
     }
 
-    public static String formatProperties(int indentLevel, Map<String, AbstractPropertyValue> properties) {
+    public static String formatProperties(int indentLevel, Map<String, ? extends AbstractPropertyValue> properties) {
         StringBuilder buffer = new StringBuilder();
-        for (Map.Entry<String, AbstractPropertyValue> propertyEntry : properties.entrySet()) {
+        for (Map.Entry<String, ? extends AbstractPropertyValue> propertyEntry : properties.entrySet()) {
             if (propertyEntry.getValue() != null) {
+                if (propertyEntry.getValue() instanceof PropertyValue && ((PropertyValue) propertyEntry.getValue()).getValue() == null) {
+                    continue;
+                }
                 buffer.append("\n").append(indent(indentLevel)).append(propertyEntry.getKey()).append(": ")
                         .append(formatPropertyValue(indentLevel, propertyEntry.getValue()));
             }
@@ -144,7 +171,11 @@ public class ToscaPropertySerializerUtils {
         }
     }
 
-    private static String escapeDoubleQuote(String scalar) {
+    public static String escapeDoubleQuotedString(String scalar) {
+        return StringEscapeUtils.escapeJava(scalar);
+    }
+
+    public static String escapeDoubleQuote(String scalar) {
         if (scalar != null && scalar.contains("\"")) {
             // escape double quote
             return scalar.replaceAll("\"", "\\\\\"");
@@ -155,10 +186,10 @@ public class ToscaPropertySerializerUtils {
     /**
      * Check if a property has been defined with a non null and not empty value.
      *
-     * @param properties
-     *            The map of properties in which to look.
-     * @param property
-     *            The name of the property.
+     * Note: used in cloudify 3 provider blueprint generator. Should it be moved ?
+     *
+     * @param properties The map of properties in which to look.
+     * @param property The name of the property.
      * @return True if a value has been defined, false if not.
      */
     public static boolean hasPropertyValue(Map<String, AbstractPropertyValue> properties, String property) {
@@ -178,14 +209,6 @@ public class ToscaPropertySerializerUtils {
             return true;
         }
         return false;
-    }
-
-    public static Map<String, AbstractPropertyValue> addPropertyValueIfMissing(Map<String, AbstractPropertyValue> properties, String key, String value) {
-        Map<String, AbstractPropertyValue> copy = new HashMap<>(properties);
-        if (!copy.containsKey(key) || copy.get(key) == null) {
-            copy.put(key, new ScalarPropertyValue(value));
-        }
-        return copy;
     }
 
     private static boolean isPrimitiveType(Object value) {

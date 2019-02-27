@@ -5,6 +5,7 @@ define(function (require) {
   var _ = require('lodash');
   var angular = require('angular');
   require('angular-file-upload');
+  require('scripts/common/directives/parsing_errors');
 
   modules.get('a4c-common').directive('uploadDirective', function() {
     return {
@@ -16,45 +17,108 @@ define(function (require) {
         'dragAndDropMessage' : '=',
         'buttonMessage' : '=',
         'beforeUploadCallback': '&', // should take two param named 'scope' and 'files'
-        'uploadSuccessCallback': '&'
+        'uploadSuccessCallback': '&',
+        'getWorkspaceSpecifics': '&?' // should take one param named 'scope'
       }
     };
   });
 
-  modules.get('a4c-common', ['angularFileUpload']).controller('UploadCtrl', [ '$scope', '$upload', '$q', function($scope, $upload, $q) {
-    // states classes
-    var statesToClasses = {
-      'error': 'danger',
-      'success': 'success',
-      'progress': 'info'
+  modules.get('a4c-common').factory('uploadServiceFactory',['Upload',function($upload) {
+    var FileUploadManager = function(scope) {
+      this.scope = scope;
+      this.scope.uploadInfos = [];
+      this.scope.upload = [];
+      this.scope.uploadCtrl = {};
     };
 
-    $scope.uploadInfos = [];
-    $scope.upload = [];
-    $scope.uploadCtrl = {};
-
-    // take that out as a callback.
-    function handleUploadErrors(index, data) {
-      if (_.undefined(data.data)) {
-        $scope.uploadInfos[index].otherError = {};
-        $scope.uploadInfos[index].otherError.code = data.error.code;
-        $scope.uploadInfos[index].otherError.message = data.error.message;
-      } else if (_.defined(data.data.errors) && _.size(data.data.errors) > 0) {
-        $scope.uploadInfos[index].errors = data.data.errors;
+    function setInfoType(uploadInfos, errors, statesToClasses) {
+      if (_.defined(_.find(_.flatten(_.values(errors)), {'errorLevel': 'WARNING'}))) {
+        //change the displayed class into warning if there is a warning
+        uploadInfos.infoType = statesToClasses.warn;
+      } else {
+        uploadInfos.infoType = statesToClasses.success;
       }
     }
 
+    FileUploadManager.prototype = {
+      constructor: FileUploadManager,
+      statesToClasses: {
+        'error': 'danger',
+        'success': 'success',
+        'progress': 'info',
+        'warn': 'warning'
+      },
+      handleUploadErrors: function(index, data) {
+        if (_.undefined(data.data)) {
+          this.scope.uploadInfos[index].otherError = {
+            code: data.error.code,
+            message: data.error.message
+          };
+        } else if (_.isNotEmpty(data.data.errors)) {
+          this.scope.uploadInfos[index].errors = data.data.errors;
+        }
+      },
+      doUpload: function(file, uploadData) {
+        var self = this;
+        var index = this.scope.uploadInfos.length;
+        this.scope.uploadInfos.push({
+          'name': file.name,
+          'progress': 0,
+          'infoType': self.statesToClasses.progress,
+          'isErrorBlocCollapsed': true
+        });
 
-//build the upload directive data
-    function buildUploadData(file){
+        this.scope.upload[index] = $upload.upload(uploadData).progress(function(evt) {
+          self.scope.uploadInfos[index].progress = parseInt(100.0 * evt.loaded / evt.total);
+        }).success(function(data) {
+          // file is uploaded successfully and the server respond without error
+          if (data.error === null) {
+            if (self.scope.uploadSuccessCallback) {
+              self.scope.uploadSuccessCallback(data);
+            }
+
+            var errors = _.get(data, 'data.errors');
+            setInfoType(self.scope.uploadInfos[index], errors, self.statesToClasses);
+            // there might be warnings. display them
+            if (_.isNotEmpty(errors)) {
+              self.scope.uploadInfos[index].errors = errors;
+            }
+          } else {
+            self.scope.uploadInfos[index].infoType = self.statesToClasses.error;
+            self.handleUploadErrors(index, data);
+          }
+        }).error(function(data, status) {
+          self.scope.uploadInfos[index].infoType = self.statesToClasses.error;
+          self.scope.uploadInfos[index].error = {
+            code: status,
+            message: 'An Error has occurred on the server!'
+          };
+        });
+      }
+    };
+
+    return function(scope) {
+      return new FileUploadManager(scope);
+    };
+  }]);
+
+  modules.get('a4c-common', ['ngFileUpload']).controller('UploadCtrl', [ '$scope', 'Upload', '$q', 'uploadServiceFactory', function($scope, $upload, $q, uploadServiceFactory) {
+
+    if(_.defined($scope.getWorkspaceSpecifics) && _.isFunction($scope.getWorkspaceSpecifics())){
+      $scope.getWorkspaceSpecifics()($scope);
+    }
+
+    var uploadService = uploadServiceFactory($scope);
+    //build the upload directive data
+    function buildUploadData(file) {
       var data = {file: file};
 
       //these can be simple values or functions
       var url = angular.isFunction($scope.targetUrl()) ? $scope.targetUrl()() : $scope.targetUrl();
-      var requestData = angular.isFunction($scope.requestData()) ? $scope.requestData()() : $scope.requestData();
+      var requestData = angular.isFunction($scope.requestData()) ? $scope.requestData()($scope) : $scope.requestData();
 
       if(_.defined(url)){
-        data.url=url;
+        data.url = url;
       }
       if(_.defined(requestData)){
         data.data = requestData;
@@ -63,42 +127,8 @@ define(function (require) {
     }
 
     $scope.doUpload = function(file) {
-
       var uploadData =  buildUploadData(file);
-      var index = $scope.uploadInfos.length;
-      $scope.uploadInfos.push({
-        'name': file.name,
-        'progress': 0,
-        'infoType': statesToClasses.progress,
-        'isErrorBlocCollapsed': true
-      });
-
-
-      $scope.upload[index] = $upload.upload(uploadData).progress(function(evt) {
-        $scope.uploadInfos[index].progress = parseInt(100.0 * evt.loaded / evt.total);
-      }).success(function(data) {
-        // file is uploaded successfully and the server respond without error
-        if (data.error === null) {
-          $scope.uploadInfos[index].infoType = statesToClasses.success;
-          if ($scope.uploadSuccessCallback) {
-            $scope.uploadSuccessCallback(data);
-          }
-
-          // there might be warnings. display them
-          if (_.defined(data.data) && _.defined(data.data.errors) && _.size(data.data.errors) >0) {
-            $scope.uploadInfos[index].errors = data.data.errors;
-          }
-
-        } else {
-          $scope.uploadInfos[index].infoType = statesToClasses.error;
-          handleUploadErrors(index, data);
-        }
-      }).error(function(data, status) {
-        $scope.uploadInfos[index].infoType = statesToClasses.error;
-        $scope.uploadInfos[index].error = {};
-        $scope.uploadInfos[index].error.code = status;
-        $scope.uploadInfos[index].error.message = 'An Error has occurred on the server!';
-      });
+      uploadService.doUpload(file, uploadData);
     };
 
     function uploadFiles($files){

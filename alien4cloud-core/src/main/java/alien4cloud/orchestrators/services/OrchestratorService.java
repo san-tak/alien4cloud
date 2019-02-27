@@ -1,6 +1,5 @@
 package alien4cloud.orchestrators.services;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -8,8 +7,6 @@ import java.util.UUID;
 
 import javax.annotation.Resource;
 import javax.inject.Inject;
-
-import lombok.extern.slf4j.Slf4j;
 
 import org.apache.commons.lang3.StringUtils;
 import org.elasticsearch.index.query.FilterBuilder;
@@ -29,6 +26,7 @@ import alien4cloud.model.orchestrators.locations.LocationSupport;
 import alien4cloud.orchestrators.locations.services.LocationService;
 import alien4cloud.orchestrators.plugin.IOrchestratorPluginFactory;
 import alien4cloud.utils.MapUtil;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Manages orchestrators
@@ -36,8 +34,8 @@ import alien4cloud.utils.MapUtil;
 @Slf4j
 @Service
 public class OrchestratorService {
-    public static final String[] ENABLED_STATES = new String[] { OrchestratorState.CONNECTED.toString(),
-            OrchestratorState.CONNECTING.toString(), OrchestratorState.DISCONNECTED.toString() };
+    public static final String[] ENABLED_STATES = new String[] { OrchestratorState.CONNECTED.toString(), OrchestratorState.CONNECTING.toString(),
+            OrchestratorState.DISCONNECTED.toString() };
 
     @Resource(name = "alien-es-dao")
     private IGenericSearchDAO alienDAO;
@@ -63,8 +61,6 @@ public class OrchestratorService {
         orchestrator.setPluginBean(pluginBean);
         // by default clouds are disabled as it should be configured before being enabled.
         orchestrator.setState(OrchestratorState.DISABLED);
-        orchestrator.setAuthorizedUsers(new ArrayList<String>());
-        orchestrator.setAuthorizedGroups(new ArrayList<String>());
 
         // get default configuration for the orchestrator.
         IOrchestratorPluginFactory orchestratorFactory = getPluginFactory(orchestrator);
@@ -113,6 +109,10 @@ public class OrchestratorService {
                 locationService.delete(id, location.getId());
             }
         }
+
+        IOrchestratorPluginFactory pluginFactory = getPluginFactory(get(id));
+        pluginFactory.delete(id);
+
         // delete the orchestrator configuration
         alienDAO.delete(OrchestratorConfiguration.class, id);
         alienDAO.delete(Orchestrator.class, id);
@@ -156,7 +156,7 @@ public class OrchestratorService {
         if (status != null) {
             filters = MapUtil.newHashMap(new String[] { "status" }, new String[][] { new String[] { status.toString() } });
         }
-        return alienDAO.search(Orchestrator.class, query, filters, authorizationFilter, null, from, size);
+        return alienDAO.search(Orchestrator.class, query, filters, authorizationFilter, null, from, size, "name.lower_case", false);
     }
 
     /**
@@ -196,8 +196,9 @@ public class OrchestratorService {
     public List<Orchestrator> getAllEnabledOrchestrators() {
         return alienDAO.customFindAll(Orchestrator.class, QueryBuilders.termsQuery("state", ENABLED_STATES));
     }
-    
+
     public List<Orchestrator> getAll() {
-       return alienDAO.customFindAll(Orchestrator.class, null);
+        return alienDAO.customFindAll(Orchestrator.class, null);
     }
+
 }

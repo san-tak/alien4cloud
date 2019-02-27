@@ -2,8 +2,9 @@ package alien4cloud.paas.wf.validation;
 
 import java.util.List;
 
-import alien4cloud.paas.wf.Workflow;
-import alien4cloud.paas.wf.WorkflowsBuilderService.TopologyContext;
+import org.alien4cloud.tosca.model.workflow.Workflow;
+
+import alien4cloud.paas.wf.TopologyContext;
 
 public interface Rule {
 

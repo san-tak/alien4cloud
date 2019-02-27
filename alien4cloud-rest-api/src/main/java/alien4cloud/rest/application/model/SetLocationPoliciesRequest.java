@@ -1,17 +1,16 @@
 package alien4cloud.rest.application.model;
 
-import io.swagger.annotations.ApiModel;
-import io.swagger.annotations.ApiModelProperty;
-
 import java.util.Map;
 
+import alien4cloud.utils.AlienConstants;
+import io.swagger.annotations.ApiModel;
+import io.swagger.annotations.ApiModelProperty;
 import lombok.Getter;
 import lombok.Setter;
-import alien4cloud.common.AlienConstants;
 
 @Getter
 @Setter
-@ApiModel(description = "Request to set locations policies fro a deployment.")
+@ApiModel(description = "Request to set locations policies for a deployment.")
 public class SetLocationPoliciesRequest {
     @ApiModelProperty(value = "Id of the Orchestratrator managing the locations on which we want to deploy.", required = true, dataType = "string")
     private String orchestratorId;

@@ -5,7 +5,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import alien4cloud.json.deserializer.TaskIndexedInheritableToscaElementDeserializer;
-import alien4cloud.model.components.IndexedInheritableToscaElement;
+import org.alien4cloud.tosca.model.types.AbstractInheritableToscaType;
 import alien4cloud.utils.jackson.ConditionalAttributes;
 import alien4cloud.utils.jackson.ConditionalOnAttribute;
 
@@ -22,11 +22,11 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-public class TopologyTask extends AbstractTask {
+public abstract class TopologyTask extends AbstractTask {
     // Name of the node template that needs to be fixed.
     private String nodeTemplateName;
     // related component
     @ConditionalOnAttribute(ConditionalAttributes.REST)
     @JsonDeserialize(using = TaskIndexedInheritableToscaElementDeserializer.class)
-    private IndexedInheritableToscaElement component;
+    private AbstractInheritableToscaType component;
 }

@@ -1,28 +1,19 @@
 package alien4cloud.utils;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
 import java.nio.charset.Charset;
-import java.nio.file.CopyOption;
+import java.nio.file.*;
 import java.nio.file.FileSystem;
-import java.nio.file.FileSystems;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import lombok.extern.slf4j.Slf4j;
+import javax.xml.bind.DatatypeConverter;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
@@ -33,6 +24,9 @@ import com.google.common.collect.Lists;
 import com.google.common.io.ByteStreams;
 import com.google.common.io.Closeables;
 
+import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
+
 @Slf4j
 public final class FileUtil {
     /**
@@ -41,7 +35,27 @@ public final class FileUtil {
     private FileUtil() {
     }
 
-    static void putZipEntry(ZipOutputStream zipOutputStream, ZipEntry zipEntry, Path file) throws IOException {
+    /**
+     * Check if the file matching the given path is a zip file or not.
+     * 
+     * @param path The patch to check.
+     */
+    public static boolean isZipFile(Path path) {
+        File f = path.toFile();
+        if (f.isDirectory() || f.length() < 4) {
+            return false;
+        }
+
+        try (DataInputStream inputStream = new DataInputStream(new FileInputStream(f))) {
+            return inputStream.readInt() == 0x504b0304;
+        } catch (FileNotFoundException e) {
+            return false;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    protected static void putZipEntry(ZipOutputStream zipOutputStream, ZipEntry zipEntry, Path file) throws IOException {
         zipOutputStream.putNextEntry(zipEntry);
         InputStream input = new BufferedInputStream(Files.newInputStream(file));
         try {
@@ -52,7 +66,7 @@ public final class FileUtil {
         }
     }
 
-    static void putTarEntry(TarArchiveOutputStream tarOutputStream, TarArchiveEntry tarEntry, Path file) throws IOException {
+    protected static void putTarEntry(TarArchiveOutputStream tarOutputStream, TarArchiveEntry tarEntry, Path file) throws IOException {
         tarEntry.setSize(Files.size(file));
         tarOutputStream.putArchiveEntry(tarEntry);
         InputStream input = new BufferedInputStream(Files.newInputStream(file));
@@ -167,6 +181,10 @@ public final class FileUtil {
     }
 
     public static void copy(final Path source, final Path destination, final CopyOption... options) throws IOException {
+        copy(source, destination, false, options);
+    }
+
+    public static void copy(final Path source, final Path destination, final boolean ignoreExisting, final CopyOption... options) throws IOException {
         if (Files.notExists(destination)) {
             Files.createDirectories(destination);
         }
@@ -176,6 +194,9 @@ public final class FileUtil {
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                 String fileRelativePath = relativizePath(source, file);
                 Path destFile = destination.resolve(fileRelativePath);
+                if (ignoreExisting && destFile.toFile().exists()) {
+                    return FileVisitResult.CONTINUE;
+                }
                 Files.copy(file, destFile, options);
                 return FileVisitResult.CONTINUE;
             }
@@ -184,23 +205,52 @@ public final class FileUtil {
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
                 String dirRelativePath = relativizePath(source, dir);
                 Path destDir = destination.resolve(dirRelativePath);
-                Files.createDirectories(destDir);
+                if (!(ignoreExisting && destDir.toFile().exists())) {
+                    Files.createDirectories(destDir);
+                }
                 return FileVisitResult.CONTINUE;
             }
         });
     }
 
     private static class EraserWalker extends SimpleFileVisitor<Path> {
+        private Path[] keepPath;
+
+        private EraserWalker(Path... keepPath) {
+            this.keepPath = keepPath;
+        }
+
+        private boolean isKeepPath(Path path) {
+            for (Path keep : keepPath) {
+                if (path.equals(keep)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+            if (isKeepPath(dir)) {
+                return FileVisitResult.SKIP_SUBTREE;
+            }
+            return super.preVisitDirectory(dir, attrs);
+        }
+
         @Override
         public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-            file.toFile().delete();
+            if (!isKeepPath(file)) {
+                file.toFile().delete();
+            }
             return FileVisitResult.CONTINUE;
         }
 
         @Override
         public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
             if (exc == null) {
-                dir.toFile().delete();
+                if (!isKeepPath(dir)) {
+                    dir.toFile().delete();
+                }
                 return FileVisitResult.CONTINUE;
             }
             throw exc;
@@ -208,17 +258,18 @@ public final class FileUtil {
     }
 
     /**
-     * Recursively delete file and directory
+     * Recursively delete file and directory but the specified paths
      *
      * @param deletePath file path can be directory
+     * @param keepPath paths not to be deleted.
      * @throws IOException when IO error happened
      */
-    public static void delete(Path deletePath) throws IOException {
+    public static void delete(Path deletePath, Path... keepPath) throws IOException {
         if (!Files.isDirectory(deletePath)) {
             deletePath.toFile().delete();
             return;
         }
-        Files.walkFileTree(deletePath, new EraserWalker());
+        Files.walkFileTree(deletePath, new EraserWalker(keepPath));
     }
 
     /**
@@ -299,5 +350,63 @@ public final class FileUtil {
             }
         });
         return files;
+    }
+
+    /**
+     * Computes a SHA-1 checksum on a single file.
+     * 
+     * @param path The path of the file for which to compute the SHA-1 hash.
+     * @return The SHA-1 hash string.
+     */
+    @SneakyThrows({ Exception.class })
+    public static String getSHA1Checksum(Path path) {
+        if (!Files.exists(path)) {
+            throw new FileNotFoundException("File not found in hash processor" + path);
+        }
+        MessageDigest digest = MessageDigest.getInstance("SHA1");
+        addFileToDigest(digest, path);
+        return DatatypeConverter.printHexBinary(digest.digest());
+    }
+
+    /**
+     * Computes a SHA-1 checksum on a directory. The checksum ignores hidden files.
+     *
+     * @param rootPath The root path for which to compute SHA-1 on every sub files and folders.
+     * @return The SHA-1 hash string.
+     */
+    @SneakyThrows({ IOException.class })
+    public static String deepSHA1(Path rootPath) {
+        if (isZipFile(rootPath)) {
+            try (FileSystem csarFS = FileSystems.newFileSystem(rootPath, null)) {
+                Path innerZipPath = csarFS.getPath(FileSystems.getDefault().getSeparator());
+                return computeDirectoryHash(innerZipPath);
+            }
+        } else if (Files.isRegularFile(rootPath)) {
+            return getSHA1Checksum(rootPath);
+        } else if (Files.isDirectory(rootPath)) {
+            return computeDirectoryHash(rootPath);
+        }
+        throw new FileNotFoundException("Unable to compute hash for file " + rootPath);
+    }
+
+    @SneakyThrows({ IOException.class, NoSuchAlgorithmException.class })
+    private static String computeDirectoryHash(Path rootPath) {
+        MessageDigest digest = MessageDigest.getInstance("SHA1");
+        Files.walk(rootPath).filter(FileUtil::isNotHidden).filter(Files::isRegularFile).forEach(path -> addFileToDigest(digest, path));
+        return DatatypeConverter.printHexBinary(digest.digest());
+
+    }
+
+    @SneakyThrows({ IOException.class })
+    private static void addFileToDigest(MessageDigest digest, Path path) {
+        try (InputStream digestInputStream = new DigestInputStream(new BufferedInputStream(Files.newInputStream(path)), digest)) {
+            while (digestInputStream.read() != -1) {
+            }
+        }
+    }
+
+    @SneakyThrows({ IOException.class })
+    private static boolean isNotHidden(Path path) {
+        return !Files.isHidden(path);
     }
 }

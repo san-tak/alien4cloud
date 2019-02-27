@@ -1,5 +1,11 @@
 package alien4cloud.application;
 
+import static alien4cloud.paas.function.FunctionEvaluator.isGetInput;
+import static org.alien4cloud.tosca.normative.constants.NormativeWorkflowNameConstants.INSTALL;
+import static org.alien4cloud.tosca.normative.constants.NormativeWorkflowNameConstants.START;
+import static org.alien4cloud.tosca.normative.constants.NormativeWorkflowNameConstants.STOP;
+import static org.alien4cloud.tosca.normative.constants.NormativeWorkflowNameConstants.UNINSTALL;
+
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Iterator;
@@ -9,31 +15,28 @@ import java.util.Set;
 
 import javax.annotation.Resource;
 
-import lombok.extern.slf4j.Slf4j;
-
+import org.alien4cloud.tosca.model.definitions.AbstractPropertyValue;
+import org.alien4cloud.tosca.model.definitions.FunctionPropertyValue;
+import org.alien4cloud.tosca.model.templates.Capability;
+import org.alien4cloud.tosca.model.templates.NodeGroup;
+import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.templates.RelationshipTemplate;
+import org.alien4cloud.tosca.model.templates.SubstitutionTarget;
+import org.alien4cloud.tosca.model.templates.Topology;
+import org.alien4cloud.tosca.model.types.NodeType;
 import org.springframework.stereotype.Service;
+
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import alien4cloud.component.ICSARRepositorySearchService;
 import alien4cloud.exception.AlreadyExistException;
 import alien4cloud.exception.CyclicReferenceException;
-import alien4cloud.model.components.AbstractPropertyValue;
-import alien4cloud.model.components.FunctionPropertyValue;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.topology.Capability;
-import alien4cloud.model.topology.NodeGroup;
-import alien4cloud.model.topology.NodeTemplate;
-import alien4cloud.model.topology.RelationshipTemplate;
-import alien4cloud.model.topology.SubstitutionTarget;
-import alien4cloud.model.topology.Topology;
-import alien4cloud.paas.wf.Workflow;
+import alien4cloud.paas.wf.TopologyContext;
 import alien4cloud.paas.wf.WorkflowsBuilderService;
-import alien4cloud.paas.wf.WorkflowsBuilderService.TopologyContext;
 import alien4cloud.topology.TopologyServiceCore;
-import alien4cloud.tosca.normative.ToscaFunctionConstants;
 import alien4cloud.utils.MapUtil;
-
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
@@ -41,7 +44,7 @@ public class TopologyCompositionService {
 
     @Resource
     private ICSARRepositorySearchService csarRepoSearchService;
-    
+
     @Resource
     private TopologyServiceCore topologyServiceCore;
 
@@ -62,13 +65,15 @@ public class TopologyCompositionService {
                 log.debug(String.format("Topology composition has been processed for topology <%s> substituting %d embeded topologies", topology.getId(),
                         stack.size()));
             }
-            
+
             // std workflows are reinitialized when some composition is processed
             // TODO: find a better way to manage this
             TopologyContext topologyContext = workflowBuilderService.buildTopologyContext(topology);
-            workflowBuilderService.reinitWorkflow(Workflow.INSTALL_WF, topologyContext);
-            workflowBuilderService.reinitWorkflow(Workflow.UNINSTALL_WF, topologyContext);
-            
+            workflowBuilderService.reinitWorkflow(INSTALL, topologyContext, false);
+            workflowBuilderService.reinitWorkflow(START, topologyContext, false);
+            workflowBuilderService.reinitWorkflow(STOP, topologyContext, false);
+            workflowBuilderService.reinitWorkflow(UNINSTALL, topologyContext, false);
+            workflowBuilderService.postProcessTopologyWorkflows(topologyContext);
         }
     }
 
@@ -89,8 +94,8 @@ public class TopologyCompositionService {
         for (NodeTemplate childNodeTemplate : compositionCouple.child.getNodeTemplates().values()) {
             for (Entry<String, AbstractPropertyValue> propertyEntry : childNodeTemplate.getProperties().entrySet()) {
                 AbstractPropertyValue pValue = propertyEntry.getValue();
-                if (pValue instanceof FunctionPropertyValue && ((FunctionPropertyValue)pValue).getFunction().equals(ToscaFunctionConstants.GET_INPUT)) {
-                    String inputName = ((FunctionPropertyValue)pValue).getTemplateName();
+                if (isGetInput(pValue)) {
+                    String inputName = ((FunctionPropertyValue) pValue).getTemplateName();
                     propertyEntry.setValue(proxyNodeTemplate.getProperties().get(inputName));
                 }
             }
@@ -98,7 +103,7 @@ public class TopologyCompositionService {
                 if (capabilityEntry.getValue().getProperties() != null) {
                     for (Entry<String, AbstractPropertyValue> propertyEntry : capabilityEntry.getValue().getProperties().entrySet()) {
                         AbstractPropertyValue pValue = propertyEntry.getValue();
-                        if (pValue instanceof FunctionPropertyValue && ((FunctionPropertyValue) pValue).getFunction().equals(ToscaFunctionConstants.GET_INPUT)) {
+                        if (isGetInput(pValue)) {
                             String inputName = ((FunctionPropertyValue) pValue).getTemplateName();
                             propertyEntry.setValue(proxyNodeTemplate.getProperties().get(inputName));
                         }
@@ -262,7 +267,8 @@ public class TopologyCompositionService {
         for (Entry<String, NodeTemplate> nodeEntry : topology.getNodeTemplates().entrySet()) {
             String nodeName = nodeEntry.getKey();
             String type = nodeEntry.getValue().getType();
-            IndexedNodeType nodeType = csarRepoSearchService.getElementInDependencies(IndexedNodeType.class, type, topology.getDependencies());
+            // FIXME use tosca context, beware of child topologies (dependencies to use ? conflicts ?)
+            NodeType nodeType = csarRepoSearchService.getRequiredElementInDependencies(NodeType.class, type, topology.getDependencies());
             if (nodeType.getSubstitutionTopologyId() != null) {
                 // this node type is a proxy for a topology template
                 Topology child = topologyServiceCore.getOrFail(nodeType.getSubstitutionTopologyId());
@@ -273,7 +279,7 @@ public class TopologyCompositionService {
             }
         }
     }
-    
+
     private void renameNodes(CompositionCouple compositionCouple) {
         Topology topology = compositionCouple.child;
         String[] nodeNames = new String[topology.getNodeTemplates().size()];
@@ -284,7 +290,9 @@ public class TopologyCompositionService {
         }
     }
 
-    private String ensureNodeNameIsUnique(Set<String> keys, String prefix, int suffixeNumber) {
+    // TODO ALIEN-2589: move elsewhere
+    @Deprecated
+    public static String ensureNodeNameIsUnique(Set<String> keys, String prefix, int suffixeNumber) {
         String name = (suffixeNumber > 0) ? prefix + suffixeNumber : prefix;
         if (keys.contains(name)) {
             return ensureNodeNameIsUnique(keys, prefix, ++suffixeNumber);
@@ -353,7 +361,7 @@ public class TopologyCompositionService {
         }
         for (Entry<String, NodeTemplate> nodeEntry : child.getNodeTemplates().entrySet()) {
             String type = nodeEntry.getValue().getType();
-            IndexedNodeType nodeType = csarRepoSearchService.getElementInDependencies(IndexedNodeType.class, type, child.getDependencies());
+            NodeType nodeType = csarRepoSearchService.getElementInDependencies(NodeType.class, type, child.getDependencies());
             if (nodeType.getSubstitutionTopologyId() != null) {
                 if (nodeType.getSubstitutionTopologyId().equals(mainTopologyId)) {
                     throw new CyclicReferenceException("Cyclic reference : a topology template can not reference itself (even indirectly)");

@@ -28,18 +28,22 @@ public class MockPaaSProvider implements IPaaSProvider, IConfigurablePaaSProvide
     private List<PaaSNodeTemplate> roots;
 
     @Override
-    public void setConfiguration(String configuration) throws PluginConfigurationException {
-
+    public void setConfiguration(String orchestratorId, String configuration) throws PluginConfigurationException {
     }
 
     @Override
-    public void init(Map<String, PaaSTopologyDeploymentContext> activeDeployments) {
+    public void init(Map<String, String> activeDeployments) {
 
     }
 
     @Override
     public void deploy(PaaSTopologyDeploymentContext deploymentContext, IPaaSCallback<?> callback) {
         this.roots = deploymentContext.getPaaSTopology().getComputes();
+    }
+
+    @Override
+    public void update(PaaSTopologyDeploymentContext deploymentContext, IPaaSCallback<?> callback) {
+
     }
 
     @Override
@@ -85,7 +89,7 @@ public class MockPaaSProvider implements IPaaSProvider, IConfigurablePaaSProvide
     }
 
     @Override
-    public void launchWorkflow(PaaSDeploymentContext deploymentContext, String workflowName, Map<String, Object> inputs, IPaaSCallback<?> callback) {
+    public void launchWorkflow(PaaSDeploymentContext deploymentContext, String workflowName, Map<String, Object> inputs, IPaaSCallback<String> callback) {
     }
 
 }

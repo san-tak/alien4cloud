@@ -1,66 +1,84 @@
 package alien4cloud.application;
 
-import java.util.*;
+import static alien4cloud.dao.FilterUtil.fromKeyValueCouples;
+import static alien4cloud.dao.FilterUtil.singleKeyFilter;
+
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import javax.annotation.Resource;
+import javax.inject.Inject;
 
-import lombok.extern.slf4j.Slf4j;
-
-import org.elasticsearch.index.query.QueryBuilders;
-import org.elasticsearch.mapping.QueryHelper;
-import org.elasticsearch.mapping.QueryHelper.SearchQueryHelperBuilder;
-import org.springframework.stereotype.Service;
-
-import alien4cloud.dao.IGenericSearchDAO;
-import alien4cloud.dao.model.GetMultipleDataResult;
-import alien4cloud.exception.AlreadyExistException;
-import alien4cloud.exception.NotFoundException;
-import alien4cloud.model.application.Application;
+import alien4cloud.common.MetaPropertiesService;
+import alien4cloud.model.common.MetaPropConfiguration;
+import alien4cloud.model.common.MetaPropertyTarget;
 import alien4cloud.model.common.Tag;
-import alien4cloud.model.deployment.Deployment;
-import alien4cloud.paas.exception.OrchestratorDisabledException;
-import alien4cloud.security.AuthorizationUtil;
-import alien4cloud.security.model.ApplicationRole;
-import alien4cloud.utils.MapUtil;
+import org.alien4cloud.alm.events.AfterApplicationDeleted;
+import org.alien4cloud.alm.events.BeforeApplicationDeleted;
+import org.alien4cloud.tosca.catalog.index.ArchiveImageLoader;
+import org.alien4cloud.tosca.model.templates.Topology;
+import org.elasticsearch.common.lang3.ArrayUtils;
+import org.elasticsearch.common.lang3.StringUtils;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Service;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
+import alien4cloud.application.ApplicationEnvironmentService.DeleteApplicationEnvironments;
+import alien4cloud.application.ApplicationVersionService.DeleteApplicationVersions;
+import alien4cloud.common.ResourceUpdateInterceptor;
+import alien4cloud.dao.IGenericSearchDAO;
+import alien4cloud.exception.AlreadyExistException;
+import alien4cloud.exception.NotFoundException;
+import alien4cloud.images.ImageDAO;
+import alien4cloud.model.application.Application;
+import alien4cloud.model.deployment.Deployment;
+import alien4cloud.security.AuthorizationUtil;
+import alien4cloud.security.IResourceRoles;
+import alien4cloud.security.model.ApplicationRole;
+import alien4cloud.utils.NameValidationUtils;
+import lombok.extern.slf4j.Slf4j;
+
 /**
  * Service to manage applications.
- *
- * @author luc boutier
  */
 @Slf4j
 @Service
 public class ApplicationService {
-    @Resource
-    private QueryHelper queryHelper;
     @Resource(name = "alien-es-dao")
     private IGenericSearchDAO alienDAO;
     @Resource
     private ApplicationEnvironmentService applicationEnvironmentService;
     @Resource
     private ApplicationVersionService applicationVersionService;
+    @Resource
+    private ApplicationEventPublisher publisher;
+    @Resource
+    private ImageDAO imageDAO;
+    @Resource
+    private ResourceUpdateInterceptor resourceUpdateInterceptor;
+    @Inject
+    private MetaPropertiesService metaPropertiesService;
 
     /**
      * Create a new application and return it's id
      *
      * @param user The user that is creating the application (will be APPLICATION_MANAGER)
+     * @param archiveName The unique archive name (and if for the application).
      * @param name The name of the new application.
      * @param description The description of the new application.
-     * @param workspaceId The id of the workspace in which the application should be added.
      * @return The id of the newly created application.
      */
-    public String create(String user, String name, String description, String workspaceId) {
-        // application name must be unique
-        ensureNameUnicity(name);
-
-        String id = UUID.randomUUID().toString();
+    public String create(String user, String archiveName, String name, String description, Topology template) {
+        checkApplicationId(archiveName);
+        checkApplicationName(name);
 
         Application application = new Application();
-        application.setId(id);
+        application.setId(archiveName);
 
         Map<String, Set<String>> userRoles = Maps.newHashMap();
         userRoles.put(user, Sets.newHashSet(ApplicationRole.APPLICATION_MANAGER.toString()));
@@ -68,27 +86,92 @@ public class ApplicationService {
 
         application.setName(name);
         application.setDescription(description);
-        application.setCreationDate(new Date());
-        application.setLastUpdateDate(new Date());
 
-        application.setTags(Lists.<Tag> newArrayList());
-        application.setMetaProperties(Maps.<String, String> newHashMap());
+        application.setTags(Lists.newArrayList());
+        application.setMetaProperties(Maps.newHashMap());
+        if (template != null) {
+            if (template.getMetaProperties() != null) {
+                // we must find the right IDs for meta props
+                application.getMetaProperties().putAll(adaptMetapropertiesFromTopologyToApplication(template.getMetaProperties()));
+            }
+            // if an icon is defined for topology, set the same for application
+            Tag iconTag = ArchiveImageLoader.getIconTag(template.getTags());
+            if (iconTag != null) {
+                application.setImageId(iconTag.getValue());
+            }
+        }
 
         alienDAO.save(application);
-        return id;
+
+        resourceUpdateInterceptor.runOnNewApplication(application);
+
+        return archiveName;
     }
 
     /**
-     * Check the the name of the application is already used.
+     * Given the metaproperties comming from topology, if a metaproperty is found on application with the same name,
+     * use the Id of application metaproperties.
      *
-     * @param name The name of the application.
-     * @return true if an application already use this name, false if not.
+     * @param templateMetaProperties
+     * @return
      */
-    public void ensureNameUnicity(String name) {
-        if (alienDAO.count(Application.class, QueryBuilders.termQuery("name", name)) > 0) {
-            log.debug("Application name <{}> already exists.", name);
+    private Map<String, String> adaptMetapropertiesFromTopologyToApplication(Map<String, String> templateMetaProperties) {
+        Map<String, MetaPropConfiguration> applicationMps = metaPropertiesService.getMetaPropConfigurationsByName(MetaPropertyTarget.APPLICATION);
+        Map<String, MetaPropConfiguration> topologyMps = metaPropertiesService.getMetaPropConfigurationsByName(MetaPropertyTarget.TOPOLOGY);
+        Map<String, String> metapropTopologyToMapKeyMap = Maps.newHashMap();
+        topologyMps.entrySet().forEach(topologyE -> {
+            if (applicationMps.containsKey(topologyE.getKey())) {
+                metapropTopologyToMapKeyMap.put(topologyE.getValue().getId(), applicationMps.get(topologyE.getKey()).getId());
+            }
+        });
+        Map<String, String> result = Maps.newHashMap();
+        templateMetaProperties.forEach((k, v) -> {
+            String appMpId = metapropTopologyToMapKeyMap.get(k);
+            if (appMpId != null) {
+                result.put(appMpId, v);
+            }
+        });
+        return result;
+    }
+
+    private void checkApplicationId(String applicationId) {
+        // Check that it matches the required pattern
+        NameValidationUtils.validateApplicationId(applicationId);
+
+        // Check that it doesn't already exists
+        if (alienDAO.findById(Application.class, applicationId) != null) {
+            throw new AlreadyExistException("An application with the given id already exists.");
+        }
+    }
+
+    private void checkApplicationName(String name) {
+        NameValidationUtils.validateApplicationName(name);
+
+        if (alienDAO.buildQuery(Application.class).setFilters(singleKeyFilter("name", name)).count() > 0) {
+            log.debug("Application name [ {} ] already exists.", name);
             throw new AlreadyExistException("An application with the given name already exists.");
         }
+    }
+
+    /**
+     * Update the name and description of an application.
+     * 
+     * @param applicationId The application id.
+     * @param newName The new name for the application.
+     * @param newDescription The new description for the application.
+     */
+    public void update(String applicationId, String newName, String newDescription) {
+        Application application = checkAndGetApplication(applicationId, ApplicationRole.APPLICATION_MANAGER);
+
+        if (newName != null && !newName.isEmpty() && !application.getName().equals(newName)) {
+            checkApplicationName(newName);
+            application.setName(newName);
+        }
+        if (newDescription != null) {
+            application.setDescription(newDescription);
+        }
+
+        alienDAO.save(application);
     }
 
     /**
@@ -137,37 +220,38 @@ public class ApplicationService {
      *
      * @param applicationId The id of the application to remove.
      * @return True if the application has been removed, false if not.
-     * @throws alien4cloud.paas.exception.OrchestratorDisabledException
      */
-    public boolean delete(String applicationId) throws OrchestratorDisabledException {
-        // ensure that there is no active deployment(s).
-        String index = alienDAO.getIndexForType(Deployment.class);
-        SearchQueryHelperBuilder searchQueryHelperBuilder = queryHelper.buildSearchQuery(index).types(Deployment.class)
-                .filters(MapUtil.newHashMap(new String[] { "sourceId", "endDate" }, new String[][] { new String[] { applicationId }, new String[] { null } }))
-                .fieldSort("_timestamp", true);
-
-        GetMultipleDataResult<Object> result = alienDAO.search(searchQueryHelperBuilder, 0, 1);
-        if (result.getData().length > 0) {
+    public boolean delete(String applicationId) {
+        // Removal of a deployed application is not authorized
+        if (alienDAO.count(Deployment.class, null, fromKeyValueCouples("sourceId", applicationId, "endDate", null)) > 0) {
             return false;
         }
-
-        // delete the application
-        applicationVersionService.deleteByApplication(applicationId);
-        applicationEnvironmentService.deleteByApplication(applicationId);
+        // Ensure that application related resources can be removed.
+        Application application = getOrFail(applicationId);
+        DeleteApplicationVersions deleteApplicationVersions = applicationVersionService.prepareDeleteByApplication(applicationId);
+        DeleteApplicationEnvironments deleteApplicationEnvironments = applicationEnvironmentService.prepareDeleteByApplication(applicationId);
+        // Delete the application.
+        deleteApplicationVersions.delete();
+        deleteApplicationEnvironments.delete();
+        publisher.publishEvent(new BeforeApplicationDeleted(this, applicationId));
         alienDAO.delete(Application.class, applicationId);
+        if (application != null && StringUtils.isNotBlank(application.getImageId())) {
+            imageDAO.deleteAll(application.getImageId());
+        }
+        publisher.publishEvent(new AfterApplicationDeleted(this, applicationId));
         return true;
     }
 
     /**
      * Check if the connected user has at least one application role on the related application with a fail when applicationId is not valid
      * If no roles mentioned, all {@link ApplicationRole} values will be used (one at least required)
-     * 
+     *
      * @param applicationId
      * @return the related application
      */
-    public Application checkAndGetApplication(String applicationId, ApplicationRole... roles) {
+    public Application checkAndGetApplication(String applicationId, IResourceRoles... roles) {
         Application application = getOrFail(applicationId);
-        roles = (roles == null || roles.length == 0) ? ApplicationRole.values() : roles;
+        roles = ArrayUtils.isEmpty(roles) ? ApplicationRole.values() : roles;
         AuthorizationUtil.checkAuthorizationForApplication(application, roles);
         return application;
     }

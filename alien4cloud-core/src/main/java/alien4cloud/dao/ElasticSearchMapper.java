@@ -2,6 +2,7 @@ package alien4cloud.dao;
 
 import java.beans.IntrospectionException;
 import java.io.IOException;
+import java.util.Locale;
 
 import com.fasterxml.jackson.core.Version;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -9,7 +10,7 @@ import com.fasterxml.jackson.databind.module.SimpleModule;
 
 import alien4cloud.json.deserializer.PropertyConstraintDeserializer;
 import alien4cloud.json.serializer.BoundSerializer;
-import alien4cloud.model.components.PropertyConstraint;
+import org.alien4cloud.tosca.model.definitions.PropertyConstraint;
 import alien4cloud.utils.jackson.ConditionalAttributes;
 import lombok.extern.slf4j.Slf4j;
 

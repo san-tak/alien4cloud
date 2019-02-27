@@ -3,14 +3,14 @@ package alien4cloud.tosca.parser.mapping;
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 
-import lombok.extern.slf4j.Slf4j;
+import com.fasterxml.jackson.databind.PropertyNamingStrategy;
+import com.fasterxml.jackson.databind.PropertyNamingStrategy.PropertyNamingStrategyBase;
+
 import alien4cloud.tosca.parser.INodeParser;
 import alien4cloud.tosca.parser.MappingTarget;
 import alien4cloud.tosca.parser.impl.base.ScalarParser;
 import alien4cloud.tosca.parser.impl.base.TypeNodeParser;
-
-import com.fasterxml.jackson.databind.PropertyNamingStrategy;
-import com.fasterxml.jackson.databind.PropertyNamingStrategy.PropertyNamingStrategyBase;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public abstract class AbstractMapper<T> {
@@ -57,7 +57,7 @@ public abstract class AbstractMapper<T> {
         pathSeparatorLastIndex++;
         pathSeparatorLastIndex = pathSeparatorLastIndex > 0 ? pathSeparatorLastIndex : 0;
         String yamlFieldCamelCase = fieldName.substring(pathSeparatorLastIndex);
-        String yamlField = ((PropertyNamingStrategyBase) PropertyNamingStrategy.CAMEL_CASE_TO_LOWER_CASE_WITH_UNDERSCORES).translate(yamlFieldCamelCase);
+        String yamlField = ((PropertyNamingStrategyBase) PropertyNamingStrategy.SNAKE_CASE).translate(yamlFieldCamelCase);
         log.trace("Mapping yaml field {} to {} using basic ScalarParser", yamlField, fieldName);
         instance.getYamlToObjectMapping().put(yamlField, new MappingTarget(fieldName, scalarParser));
     }
@@ -74,7 +74,7 @@ public abstract class AbstractMapper<T> {
         pathSeparatorLastIndex++;
         pathSeparatorLastIndex = pathSeparatorLastIndex > 0 ? pathSeparatorLastIndex : 0;
         String yamlFieldCamelCase = fieldName.substring(pathSeparatorLastIndex);
-        String yamlField = ((PropertyNamingStrategyBase) PropertyNamingStrategy.CAMEL_CASE_TO_LOWER_CASE_WITH_UNDERSCORES).translate(yamlFieldCamelCase);
+        String yamlField = ((PropertyNamingStrategyBase) PropertyNamingStrategy.SNAKE_CASE).translate(yamlFieldCamelCase);
         log.info("Mapping yaml field {} to {} using basic ScalarParser", yamlField, fieldName);
         instance.getYamlToObjectMapping().put(yamlField, new MappingTarget(fieldName, parser));
     }

@@ -2,7 +2,7 @@ package alien4cloud.orchestrators.plugin;
 
 import java.util.Map;
 
-import alien4cloud.model.components.PropertyDefinition;
+import org.alien4cloud.tosca.model.definitions.PropertyDefinition;
 import alien4cloud.model.orchestrators.ArtifactSupport;
 import alien4cloud.model.orchestrators.locations.LocationSupport;
 
@@ -20,7 +20,7 @@ public interface IOrchestratorPluginFactory<T extends IOrchestratorPlugin<V>, V>
      *
      * @return An instance of the IOrchestrator.
      */
-    T newInstance();
+    T newInstance(V configuration);
 
     /**
      * Can be called to destroy the context linked to this instance
@@ -71,4 +71,9 @@ public interface IOrchestratorPluginFactory<T extends IOrchestratorPlugin<V>, V>
      */
     String getType();
 
+    /**
+     * Cleanup to do when the orchestrator is deleted
+     * @param id
+     */
+    default void delete(String id) {}
 }

@@ -3,18 +3,20 @@ define(function(require) {
 
   var modules = require('modules');
 
+  require('scripts/orchestrators/directives/orchestrator_location_resource_template_ctrl');
+
   modules.get('a4c-orchestrators').directive('orchestratorLocationResourceTemplate', function() {
     return {
-      templateUrl: 'views/orchestrators/orchestrator_location_resource_template.html',
+      templateUrl: 'views/orchestrators/directives/orchestrator_location_resource_template.html',
+      controller: 'OrchestratorLocationResourceTemplateCtrl',
       restrict: 'E',
       scope: {
         'resourceTemplate': '=',
         'resourceType': '=',
         'resourceCapabilityTypes': '=',
+        'resourceDataTypes': '=',
         'dependencies': '=',
-        'isEditable': '=',
         'isPropertyEditable': '&',
-//        'isPropertyEditableFn': '&',
         'onDelete': '&',
         'onUpdate': '&',
         'onPropertyUpdate': '&',

@@ -12,20 +12,29 @@ import java.util.UUID;
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 
-import alien4cloud.model.components.*;
-import alien4cloud.tosca.parser.ParsingError;
+import org.alien4cloud.tosca.catalog.ArchiveUploadService;
+import org.alien4cloud.tosca.model.Csar;
+import org.alien4cloud.tosca.model.definitions.*;
+import org.alien4cloud.tosca.model.templates.Capability;
+import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.templates.Topology;
+import org.alien4cloud.tosca.model.types.AbstractInstantiableToscaType;
+import org.alien4cloud.tosca.model.types.AbstractToscaType;
+import org.elasticsearch.index.query.QueryBuilders;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.annotation.DirtiesContext.ClassMode;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
+import com.google.common.collect.Maps;
+
+import alien4cloud.dao.IGenericSearchDAO;
 import alien4cloud.git.RepositoryManager;
-import alien4cloud.model.topology.Capability;
-import alien4cloud.model.topology.NodeTemplate;
-import alien4cloud.model.topology.Topology;
+import alien4cloud.model.components.CSARSource;
 import alien4cloud.paas.IPaaSTemplate;
 import alien4cloud.paas.model.InstanceInformation;
 import alien4cloud.paas.model.PaaSNodeTemplate;
@@ -35,17 +44,23 @@ import alien4cloud.paas.plan.ToscaNodeLifecycleConstants;
 import alien4cloud.paas.plan.ToscaRelationshipLifecycleConstants;
 import alien4cloud.security.model.Role;
 import alien4cloud.test.utils.SecurityTestUtils;
-import alien4cloud.tosca.ArchiveUploadService;
+import alien4cloud.tosca.model.ArchiveRoot;
+import alien4cloud.tosca.parser.AbstractToscaParserSimpleProfileTest;
+import alien4cloud.tosca.parser.ParserTestUtil;
 import alien4cloud.tosca.parser.ParsingResult;
+import alien4cloud.utils.AlienConstants;
 import alien4cloud.utils.FileUtil;
 import alien4cloud.utils.MapUtil;
 import alien4cloud.utils.services.ApplicationUtil;
 
-import com.google.common.collect.Maps;
-
 @RunWith(SpringJUnit4ClassRunner.class)
-@ContextConfiguration("classpath:function-application-context-test.xml")
+@ContextConfiguration("classpath:application-context-test.xml")
+@DirtiesContext
 public class FunctionEvaluatorTest {
+    private static boolean INITIALIZED = false;
+
+    @Resource(name = "alien-es-dao")
+    private IGenericSearchDAO alienDAO;
 
     @Resource
     private ArchiveUploadService archiveUploadService;
@@ -65,48 +80,62 @@ public class FunctionEvaluatorTest {
 
     @PostConstruct
     public void postConstruct() throws Throwable {
-
-        if (Files.exists(Paths.get(alienRepoDir))) {
-            try {
-                FileUtil.delete(Paths.get(alienRepoDir));
-            } catch (IOException e) {
-                e.printStackTrace();
+        if (!INITIALIZED) {
+            if (Files.exists(Paths.get(alienRepoDir))) {
+                try {
+                    FileUtil.delete(Paths.get(alienRepoDir));
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
+            SecurityTestUtils.setTestAuthentication(Role.ADMIN);
+
+            alienDAO.delete(Csar.class, QueryBuilders.matchAllQuery());
+            String normativeLocalName = "tosca-normative-types";
+            repositoryManager.cloneOrCheckout(artifactsDirectory, "https://github.com/alien4cloud/tosca-normative-types.git", "1.2.0", normativeLocalName);
+            String sampleLocalName = "samples";
+            repositoryManager.cloneOrCheckout(artifactsDirectory, "https://github.com/alien4cloud/samples.git", "1.4.0-RC1", sampleLocalName);
+
+            Path typesPath = artifactsDirectory.resolve(normativeLocalName);
+            Path typesZipPath = artifactsDirectory.resolve(normativeLocalName + ".zip");
+            FileUtil.zip(typesPath, typesZipPath);
+            ParsingResult<Csar> result = archiveUploadService.upload(typesZipPath, CSARSource.OTHER, AlienConstants.GLOBAL_WORKSPACE_ID);
+            ParserTestUtil.displayErrors(result);
+
+            AbstractToscaParserSimpleProfileTest.assertNoBlocker(result);
+
+            // typesPath = artifactsDirectory.resolve(extendedLocalName).resolve("alien-base-types");
+            // typesZipPath = artifactsDirectory.resolve("alien-base-types.zip");
+            // FileUtil.zip(typesPath, typesZipPath);
+            // result = archiveUploadService.upload(typesZipPath, CSARSource.OTHER, AlienConstants.GLOBAL_WORKSPACE_ID);
+            // AbstractToscaParserSimpleProfileTest.assertNoBlocker(result);
+
+            typesPath = artifactsDirectory.resolve(sampleLocalName).resolve("jdk");
+            typesZipPath = artifactsDirectory.resolve("jdk.zip");
+            FileUtil.zip(typesPath, typesZipPath);
+            result = archiveUploadService.upload(typesZipPath, CSARSource.OTHER, AlienConstants.GLOBAL_WORKSPACE_ID);
+            AbstractToscaParserSimpleProfileTest.assertNoBlocker(result);
+
+            typesPath = artifactsDirectory.resolve(sampleLocalName).resolve("tomcat-war");
+            typesZipPath = artifactsDirectory.resolve("tomcat_war.zip");
+            FileUtil.zip(typesPath, typesZipPath);
+            result = archiveUploadService.upload(typesZipPath, CSARSource.OTHER, AlienConstants.GLOBAL_WORKSPACE_ID);
+            AbstractToscaParserSimpleProfileTest.assertNoBlocker(result);
+
+            typesPath = Paths.get("src/test/resources/alien4cloud/paas/function/test-types");
+            typesZipPath = artifactsDirectory.resolve("target/test-types.zip");
+            FileUtil.zip(typesPath, typesZipPath);
+            result = archiveUploadService.upload(typesZipPath, CSARSource.OTHER, AlienConstants.GLOBAL_WORKSPACE_ID);
+            AbstractToscaParserSimpleProfileTest.assertNoBlocker(result);
+
+            INITIALIZED = true;
         }
-        SecurityTestUtils.setTestAuthentication(Role.ADMIN);
 
-        String normativeLocalName = "tosca-normative-types";
-        repositoryManager.cloneOrCheckout(artifactsDirectory, "https://github.com/alien4cloud/tosca-normative-types.git", "master", normativeLocalName);
-        String sampleLocalName = "samples";
-        repositoryManager.cloneOrCheckout(artifactsDirectory, "https://github.com/alien4cloud/samples.git", "master", sampleLocalName);
-        String extendedLocalName = "alien-extended-types";
-        repositoryManager.cloneOrCheckout(artifactsDirectory, "https://github.com/alien4cloud/alien4cloud-extended-types.git", "master", extendedLocalName);
-
-        Path typesPath = artifactsDirectory.resolve(normativeLocalName);
-        Path typesZipPath = artifactsDirectory.resolve(normativeLocalName + ".zip");
-        FileUtil.zip(typesPath, typesZipPath);
-        ParsingResult<Csar> result = archiveUploadService.upload(typesZipPath, CSARSource.OTHER);
-        for (ParsingError error : result.getContext().getParsingErrors()) {
-            System.out.println(error.getErrorLevel() + " " + error.getProblem());
-        }
-
-        typesPath = artifactsDirectory.resolve(extendedLocalName).resolve("alien-base-types");
-        typesZipPath = artifactsDirectory.resolve("alien-base-types.zip");
-        FileUtil.zip(typesPath, typesZipPath);
-        result = archiveUploadService.upload(typesZipPath, CSARSource.OTHER);
-
-        typesPath = artifactsDirectory.resolve(sampleLocalName).resolve("tomcat-war");
-        typesZipPath = artifactsDirectory.resolve("tomcat_war.zip");
-        FileUtil.zip(typesPath, typesZipPath);
-        result = archiveUploadService.upload(typesZipPath, CSARSource.OTHER);
-
-        typesPath = Paths.get("src/test/resources/alien/paas/function/csars/test-types");
-        typesZipPath = artifactsDirectory.resolve("target/test-types.zip");
-        FileUtil.zip(typesPath, typesZipPath);
-        result = archiveUploadService.upload(typesZipPath, CSARSource.OTHER);
-
-        Topology topology = applicationUtil.parseYamlTopology("src/test/resources/alien/paas/function/topology/badFunctionsTomcatWar");
+        ParsingResult<ArchiveRoot> result = applicationUtil.parseYamlTopology("src/test/resources/alien4cloud/paas/function/topology/badFunctionsTomcatWar");
+        // AbstractToscaParserSimpleProfileTest.assertNoBlocker(result);
+        Topology topology = result.getResult().getTopology();
         topology.setId(UUID.randomUUID().toString());
+        topology.setWorkspace(AlienConstants.GLOBAL_WORKSPACE_ID);
         builtPaaSNodeTemplates = treeBuilder.buildPaaSTopology(topology).getAllNodes();
     }
 
@@ -139,7 +168,7 @@ public class FunctionEvaluatorTest {
         scalarParameter3.setValue(":");
         scalarParameter4.setValue("port");
 
-        concatAttributeValue.setParameters(new ArrayList<IValue>());
+        concatAttributeValue.setParameters(new ArrayList<>());
         concatAttributeValue.getParameters().add(scalarParameter1);
         concatAttributeValue.getParameters().add(scalarParameter2);
         concatAttributeValue.getParameters().add(scalarParameter3);
@@ -233,7 +262,7 @@ public class FunctionEvaluatorTest {
         Assert.assertEquals(null, FunctionEvaluator.evaluateGetPropertyFunction((FunctionPropertyValue) param, hostedOnRelTemp, builtPaaSNodeTemplates));
     }
 
-    private String getPropertyValue(IPaaSTemplate<? extends IndexedToscaElement> paaSTemplate, String propertyName) {
+    private String getPropertyValue(IPaaSTemplate<? extends AbstractToscaType> paaSTemplate, String propertyName) {
         return ((ScalarPropertyValue) paaSTemplate.getTemplate().getProperties().get(propertyName)).getValue();
     }
 
@@ -276,7 +305,7 @@ public class FunctionEvaluatorTest {
         PaaSNodeTemplate computePaaS = builtPaaSNodeTemplates.get(computeName);
 
         // check if outputs referenced in get_operation_outputs on attributes are well registered on the related operation
-        IndexedArtifactToscaElement tocaElement = computePaaS.getIndexedToscaElement();
+        AbstractInstantiableToscaType tocaElement = computePaaS.getIndexedToscaElement();
         IValue oldHostNameAttr = tocaElement.getAttributes().get("old_hostname");
         IValue newHostNameAttr = tocaElement.getAttributes().get("new_hostname");
         Operation createOp = computePaaS.getInterfaces().get(ToscaNodeLifecycleConstants.STANDARD).getOperations().get(ToscaNodeLifecycleConstants.CREATE);

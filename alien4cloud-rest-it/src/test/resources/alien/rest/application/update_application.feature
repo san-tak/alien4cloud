@@ -21,11 +21,6 @@ Feature: Update an application (image or tags)
     Then I should receive a RestResponse with no error
 
   @reset
-  Scenario: Add a tag to a non existing application (OK)
-    When I add a tag with key "newtag" and value "tag value" to the application
-    Then I should receive a RestResponse with an error code 504
-
-  @reset
   Scenario: Delete a tag that exists
     Given There is a "new_application_name_with_tags" application
     And I have an application tag "my_tag"
@@ -51,7 +46,14 @@ Feature: Update an application (image or tags)
     And The application can be found in ALIEN with its "description" set to "Great app which will succeed"
 
   @reset
-  Scenario: Rename an application with an existing application name
+  Scenario: Rename an application with an invalid application name should fail
+    Given There is a "watchmiddleearth" application
+    When I set the "name" of this application to "new\\\\\application"
+    Then I should receive a RestResponse with an error code 618
+    And The application can be found in ALIEN with its "name" set to "watchmiddleearth"
+
+  @reset
+  Scenario: Rename an application with an existing application name should fail
     Given There is a "watchmiddleearth" application
     When I set the "name" of this application to "new_application_name_with_tags"
     Then I should receive a RestResponse with an error code 502

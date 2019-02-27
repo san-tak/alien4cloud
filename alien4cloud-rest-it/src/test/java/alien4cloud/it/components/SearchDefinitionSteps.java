@@ -9,41 +9,44 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
-import lombok.extern.slf4j.Slf4j;
-
+import org.alien4cloud.tosca.model.definitions.CapabilityDefinition;
+import org.alien4cloud.tosca.model.definitions.RequirementDefinition;
+import org.alien4cloud.tosca.model.types.AbstractToscaType;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.model.types.RelationshipType;
+import org.apache.commons.lang.StringUtils;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.mapping.MappingBuilder;
+import org.junit.Assert;
 
-import alien4cloud.dao.ElasticSearchDAO;
-import alien4cloud.dao.model.FacetedSearchResult;
-import alien4cloud.it.Context;
-import alien4cloud.model.components.CapabilityDefinition;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.components.IndexedRelationshipType;
-import alien4cloud.model.components.IndexedToscaElement;
-import alien4cloud.model.components.RequirementDefinition;
-import alien4cloud.rest.component.QueryComponentType;
-import alien4cloud.rest.component.SearchRequest;
-import alien4cloud.rest.model.RestResponse;
-import alien4cloud.rest.utils.JsonUtil;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
+import alien4cloud.dao.ElasticSearchDAO;
+import alien4cloud.dao.model.FacetedSearchFacet;
+import alien4cloud.dao.model.FacetedSearchResult;
+import alien4cloud.it.Context;
+import alien4cloud.rest.component.QueryComponentType;
+import alien4cloud.rest.component.ComponentSearchRequest;
+import alien4cloud.rest.model.RestResponse;
+import alien4cloud.rest.utils.JsonUtil;
+import alien4cloud.utils.AlienConstants;
+import cucumber.api.DataTable;
 import cucumber.api.java.en.Given;
 import cucumber.api.java.en.Then;
 import cucumber.api.java.en.When;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public class SearchDefinitionSteps {
     private static final String DEFAULT_ARCHIVE_VERSION = "1.0";
     private static final Map<String, QueryComponentType> QUERY_TYPES;
     private Map<String, String> indexedComponentTypes = Maps.newHashMap();
-    private final ObjectMapper jsonMapper = new ObjectMapper();
-    List<IndexedNodeType> testDataList = new ArrayList<>();
-    List<IndexedNodeType> notYetSearchedDataList = null;
+    List<NodeType> testDataList = new ArrayList<>();
+    List<NodeType> notYetSearchedDataList = null;
 
     private final Client esClient = Context.getEsClientInstance();
 
@@ -67,27 +70,25 @@ public class SearchDefinitionSteps {
 
     @When("^I search for \"([^\"]*)\" using query \"([^\"]*)\" from (\\d+) with result size of (\\d+)$")
     public void I_search_for_with_query_from_with_result_size_of(String searchedComponentType, String query, int from, int size) throws Throwable {
-        SearchRequest req = new SearchRequest(QUERY_TYPES.get(searchedComponentType), query, from, size, null);
+        ComponentSearchRequest req = new ComponentSearchRequest(QUERY_TYPES.get(searchedComponentType), query, from, size, null);
         req.setType(req.getType());
 
-        String jSon = jsonMapper.writeValueAsString(req);
+        String jSon = JsonUtil.toString(req);
         Context.getInstance().registerRestResponse(Context.getRestClientInstance().postJSon("/rest/v1/components/search", jSon));
     }
 
     @When("^I search for \"([^\"]*)\" from (\\d+) with result size of (\\d+)$")
     public void I_search_for_from_with_result_size_of(String searchedComponentType, int from, int size) throws Throwable {
-        SearchRequest req = new SearchRequest(QUERY_TYPES.get(searchedComponentType), null, from, size, null);
-        req.setType(req.getType());
-
-        String jSon = jsonMapper.writeValueAsString(req);
+        ComponentSearchRequest req = new ComponentSearchRequest(QUERY_TYPES.get(searchedComponentType), null, from, size, null);
+        String jSon = JsonUtil.toString(req);
         Context.getInstance().registerRestResponse(Context.getRestClientInstance().postJSon("/rest/v1/components/search", jSon));
     }
 
     @When("^I make a basic \"([^\"]*)\" search for \"([^\"]*)\" from (\\d+) with result size of (\\d+)$")
     public void I_make_a_basic_search_for_from_with_result_size_of(String query, String searchedComponentType, int from, int size) throws Throwable {
         // BasicSearchRequest req = new BasicSearchRequest(query, from, size);
-        SearchRequest req = new SearchRequest(QUERY_TYPES.get(searchedComponentType), query, from, size, null);
-        String jSon = jsonMapper.writeValueAsString(req);
+        ComponentSearchRequest req = new ComponentSearchRequest(QUERY_TYPES.get(searchedComponentType), query, from, size, null);
+        String jSon = JsonUtil.toString(req);
         Context.getInstance().registerRestResponse(Context.getRestClientInstance().postJSon("/rest/v1/components/search", jSon));
     }
 
@@ -137,11 +138,11 @@ public class SearchDefinitionSteps {
     public void I_search_for_from_with_result_size_of_and_filter_set_to(String searchedComponentType, int from, int size, String filterName, String filterValue)
             throws Throwable {
         Map<String, String[]> filters = Maps.newHashMap();
-        filters.put(filterName, new String[] { filterValue.toLowerCase() });
-        SearchRequest req = new SearchRequest(QUERY_TYPES.get(searchedComponentType), null, from, size, filters);
+        filters.put(filterName, new String[] { filterValue });
+        ComponentSearchRequest req = new ComponentSearchRequest(QUERY_TYPES.get(searchedComponentType), null, from, size, filters);
         req.setType(req.getType());
 
-        String jSon = jsonMapper.writeValueAsString(req);
+        String jSon = JsonUtil.toString(req);
         Context.getInstance().registerRestResponse(Context.getRestClientInstance().postJSon("/rest/v1/components/search", jSon));
     }
 
@@ -153,7 +154,7 @@ public class SearchDefinitionSteps {
         List<Object> resultData = Lists.newArrayList(searchResp.getData());
         if (searchedComponentType.equalsIgnoreCase("node types")) {
             for (Object object : resultData) {
-                IndexedNodeType idnt = jsonMapper.readValue(jsonMapper.writeValueAsString(object), IndexedNodeType.class);
+                NodeType idnt = JsonUtil.readObject(JsonUtil.toString(object), NodeType.class);
                 switch (property) {
                 case "capability":
                     assertNotNull(idnt.getCapabilities());
@@ -169,7 +170,7 @@ public class SearchDefinitionSteps {
             }
         } else if (searchedComponentType.equalsIgnoreCase("relationship types")) {
             for (Object object : resultData) {
-                IndexedRelationshipType idrt = jsonMapper.readValue(jsonMapper.writeValueAsString(object), IndexedRelationshipType.class);
+                RelationshipType idrt = JsonUtil.readObject(JsonUtil.toString(object), RelationshipType.class);
                 switch (property) {
                 case "validSource":
                     assertNotNull(idrt.getValidSources());
@@ -182,7 +183,13 @@ public class SearchDefinitionSteps {
         }
     }
 
-    @Given("^I have already made a query to search the (\\d+) first \"([^\"]*)\"$")
+    /**
+     * tototo
+     *
+     * @deprecated Do not use this method! pagination is broken with aggregations
+     */
+    @Deprecated
+    // @Given("^I have already made a query to search the (\\d+) first \"([^\"]*)\"$")
     public void I_have_already_made_a_query_to_search_the_first(int size, String searchedComponentType) throws Throwable {
         I_search_for_from_with_result_size_of(searchedComponentType, 0, size);
         notYetSearchedDataList = new ArrayList<>(testDataList);
@@ -190,7 +197,13 @@ public class SearchDefinitionSteps {
         checkPaginatedResult(size, restResponse);
     }
 
-    @Then("^The response should contains (\\d+) other \"([^\"]*)\".$")
+    /**
+     * tototo
+     *
+     * @deprecated Do not use this method! pagination is broken with aggregations
+     */
+    @Deprecated
+    // @Then("^The response should contains (\\d+) other \"([^\"]*)\".$")
     public void The_response_should_contains_other(int expectedSize, String searchedComponentType) throws Throwable {
         RestResponse<FacetedSearchResult> restResponse = JsonUtil.read(Context.getInstance().getRestResponse(), FacetedSearchResult.class);
         checkPaginatedResult(expectedSize, restResponse);
@@ -203,7 +216,7 @@ public class SearchDefinitionSteps {
     }
 
     private void checkPaginatedResult(int expectedSize, RestResponse<FacetedSearchResult> restResponse) throws IOException {
-        List<IndexedNodeType> toCheckInDataList = notYetSearchedDataList == null ? new ArrayList<>(testDataList) : notYetSearchedDataList;
+        List<NodeType> toCheckInDataList = notYetSearchedDataList == null ? new ArrayList<>(testDataList) : notYetSearchedDataList;
         assertTrue(" The size of data to check (" + toCheckInDataList.size() + ") is less than the expected size (" + expectedSize + ") of search result ",
                 toCheckInDataList.size() >= expectedSize);
         FacetedSearchResult searchResp;
@@ -217,7 +230,7 @@ public class SearchDefinitionSteps {
         // testing the pertinence of returned data
         Object[] data = searchResp.getData();
         for (int i = 0; i < data.length; i++) {
-            IndexedNodeType nt = jsonMapper.readValue(jsonMapper.writeValueAsString(data[i]), IndexedNodeType.class);
+            NodeType nt = JsonUtil.readObject(JsonUtil.toString(data[i]), NodeType.class);
             assertTrue(toCheckInDataList.contains(nt));
             toCheckInDataList.remove(nt);
         }
@@ -229,48 +242,73 @@ public class SearchDefinitionSteps {
         Class<?> clazz = QUERY_TYPES.get(type).getIndexedToscaElementClass();
         String typeName = MappingBuilder.indexTypeFromClass(clazz);
         int remaining = countHavingProperty;
-        baseName = baseName == null || baseName.isEmpty() ? type : baseName;
+        baseName = baseName == null || baseName.isEmpty() ? typeName : baseName;
         for (int i = 0; i < count; i++) {
-            IndexedToscaElement componentTemplate = (IndexedToscaElement) clazz.newInstance();
+            AbstractToscaType componentTemplate = (AbstractToscaType) clazz.newInstance();
             String elementId = baseName + "_" + i;
             componentTemplate.setElementId(elementId);
             componentTemplate.setArchiveVersion(DEFAULT_ARCHIVE_VERSION);
-            componentTemplate.setHighestVersion(true);
+            componentTemplate.setWorkspace(AlienConstants.GLOBAL_WORKSPACE_ID);
+
             if (property != null && remaining > 0) {
                 if (type.equalsIgnoreCase("node types")) {
                     switch (property) {
                     case "capability":
-                        ((IndexedNodeType) componentTemplate).setCapabilities(Lists.newArrayList(new CapabilityDefinition(propertyValue, propertyValue, 1)));
+                        ((NodeType) componentTemplate).setCapabilities(Lists.newArrayList(new CapabilityDefinition(propertyValue, propertyValue, 1)));
                         break;
                     case "requirement":
-                        ((IndexedNodeType) componentTemplate).setRequirements((Lists.newArrayList(new RequirementDefinition(propertyValue, propertyValue))));
+                        ((NodeType) componentTemplate).setRequirements((Lists.newArrayList(new RequirementDefinition(propertyValue, propertyValue))));
                         break;
                     case "default capability":
-                        ((IndexedNodeType) componentTemplate).setDefaultCapabilities((Lists.newArrayList(propertyValue)));
+                        ((NodeType) componentTemplate).setDefaultCapabilities((Lists.newArrayList(propertyValue)));
                         break;
                     case "elementId":
-                        ((IndexedNodeType) componentTemplate).setElementId(propertyValue);
+                        ((NodeType) componentTemplate).setElementId(propertyValue);
                         break;
 
                     default:
                         break;
                     }
                 } else if (type.equalsIgnoreCase("relationship types")) {
-                    ((IndexedRelationshipType) componentTemplate).setValidSources(new String[] { propertyValue });
+                    ((RelationshipType) componentTemplate).setValidSources(new String[] { propertyValue });
                 }
                 remaining -= 1;
             }
 
-            String serializeDatum = jsonMapper.writeValueAsString(componentTemplate);
+            String serializeDatum = JsonUtil.toString(componentTemplate);
             log.debug("Saving in ES: " + serializeDatum);
             esClient.prepareIndex(ElasticSearchDAO.TOSCA_ELEMENT_INDEX, typeName).setSource(serializeDatum).setRefresh(true).execute().actionGet();
 
-            if (componentTemplate instanceof IndexedNodeType) {
-                testDataList.add((IndexedNodeType) (componentTemplate));
+            if (componentTemplate instanceof NodeType) {
+                testDataList.add((NodeType) (componentTemplate));
             }
         }
 
         indexedComponentTypes.put(type, typeName);
     }
 
+    @When("^I search for all components type from (\\d+) with result size of (\\d+)$")
+    public void iSearchForAllComponentsTypeFromWithResultSizeOf(int from, int size) throws Throwable {
+        I_search_for_from_with_result_size_of(null, from, size);
+    }
+
+    @Then("^The search result should contain (\\d+) data with (\\d+) facets and some of them are:$")
+    public void theSearchResultShouldContainDataWithFacetsAndSomeOfThemAre(int numberOfData, int numberOfFacets, DataTable dataTable) throws Throwable {
+        RestResponse<FacetedSearchResult> restResponse = JsonUtil.read(Context.getInstance().getRestResponse(), FacetedSearchResult.class);
+        Assert.assertNotNull(restResponse.getData());
+        Assert.assertNotNull(restResponse.getData().getData());
+        Assert.assertEquals(numberOfData, restResponse.getData().getData().length);
+        Assert.assertNotNull(restResponse.getData().getFacets());
+        Map<String, FacetedSearchFacet[]> facets = restResponse.getData().getFacets();
+        Assert.assertEquals(numberOfFacets, facets.size());
+        dataTable.raw().forEach(line -> {
+            String key = line.get(0);
+            String value = StringUtils.isBlank(line.get(1)) ? null : line.get(1);
+            long count = Long.parseLong(line.get(2));
+            Assert.assertTrue("Facet " + key + " not found", facets.containsKey(key));
+            Optional<FacetedSearchFacet> facetFound = Arrays.stream(facets.get(key)).filter(facet -> Objects.equals(value, facet.getFacetValue())).findFirst();
+            Assert.assertTrue("Facet " + key + " does not have value " + value, facetFound.isPresent());
+            Assert.assertEquals("Facet " + key + " does not have count " + count + " for value " + value, count, facetFound.get().getCount());
+        });
+    }
 }

@@ -1,5 +1,37 @@
 package alien4cloud.csar.services;
 
+import alien4cloud.component.repository.exception.CSARUsedInActiveDeployment;
+import alien4cloud.component.repository.exception.ToscaTypeAlreadyDefinedInOtherCSAR;
+import alien4cloud.dao.IGenericSearchDAO;
+import alien4cloud.exception.AlreadyExistException;
+import alien4cloud.git.RepositoryManager;
+import alien4cloud.model.components.CSARSource;
+import alien4cloud.model.git.CsarGitCheckoutLocation;
+import alien4cloud.model.git.CsarGitRepository;
+import alien4cloud.tosca.parser.ParsingContext;
+import alien4cloud.tosca.parser.ParsingError;
+import alien4cloud.tosca.parser.ParsingErrorLevel;
+import alien4cloud.tosca.parser.ParsingException;
+import alien4cloud.tosca.parser.ParsingResult;
+import alien4cloud.tosca.parser.impl.ErrorCode;
+import alien4cloud.utils.AlienConstants;
+import alien4cloud.utils.FileUtil;
+import com.google.common.collect.Lists;
+import lombok.extern.slf4j.Slf4j;
+import org.alien4cloud.tosca.catalog.ArchiveUploadService;
+import org.alien4cloud.tosca.catalog.exception.UploadExceptionUtil;
+import org.alien4cloud.tosca.catalog.index.CsarService;
+import org.alien4cloud.tosca.model.CSARDependency;
+import org.alien4cloud.tosca.model.Csar;
+import org.alien4cloud.tosca.model.CsarDependenciesBean;
+import org.eclipse.jgit.api.Git;
+import org.springframework.beans.factory.annotation.Required;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.util.FileSystemUtils;
+
+import javax.annotation.Resource;
+import javax.inject.Inject;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -7,33 +39,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-
-import javax.annotation.Resource;
-import javax.inject.Inject;
-
-import alien4cloud.model.components.CSARSource;
-import org.eclipse.jgit.api.Git;
-import org.springframework.beans.factory.annotation.Required;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-import org.springframework.util.FileSystemUtils;
-
-import com.google.common.collect.Lists;
-
-import alien4cloud.component.repository.exception.CSARVersionAlreadyExistsException;
-import alien4cloud.dao.IGenericSearchDAO;
-import alien4cloud.exception.GitException;
-import alien4cloud.git.RepositoryManager;
-import alien4cloud.model.components.CSARDependency;
-import alien4cloud.model.components.Csar;
-import alien4cloud.model.git.CsarDependenciesBean;
-import alien4cloud.model.git.CsarGitCheckoutLocation;
-import alien4cloud.model.git.CsarGitRepository;
-import alien4cloud.tosca.ArchiveUploadService;
-import alien4cloud.tosca.parser.ParsingException;
-import alien4cloud.tosca.parser.ParsingResult;
-import alien4cloud.utils.FileUtil;
-import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
@@ -86,7 +91,7 @@ public class CsarGitService {
 
         List<ParsingResult<Csar>> results = Lists.newArrayList();
         try {
-            // Iterate over locations to be imported within the CsarGitRepository
+            // Iterate over locations (branches, folders etc.) and process the import
             for (CsarGitCheckoutLocation csarGitCheckoutLocation : csarGitRepository.getImportLocations()) {
                 List<ParsingResult<Csar>> result = doImport(csarGitRepository, csarGitCheckoutLocation);
                 if (result != null) {
@@ -114,15 +119,19 @@ public class CsarGitService {
         Git git = null;
         try {
             // checkout the repository branch
+            log.debug("Checkout repository: url: [ {} ] branch [ {} ] to [ {} ]", csarGitRepository.getRepositoryUrl(), csarGitCheckoutLocation.getBranchId(),
+                    tempDirPath);
             git = RepositoryManager.cloneOrCheckout(tempDirPath, csarGitRepository.getRepositoryUrl(), csarGitRepository.getUsername(),
                     csarGitRepository.getPassword(), csarGitCheckoutLocation.getBranchId(), csarGitRepository.getId());
             // if the repository is persistent we also have to pull to get the latest version
-            if (csarGitRepository.isStoredLocally()) {
+            if (csarGitRepository.isStoredLocally() && RepositoryManager.isBranch(git, csarGitCheckoutLocation.getBranchId())) {
                 // try to pull
+                log.debug("Pull local repository");
                 RepositoryManager.pull(git, csarGitRepository.getUsername(), csarGitRepository.getPassword());
             }
             String hash = RepositoryManager.getLastHash(git);
 
+            log.debug("Importing archives from git repository, pulled hash is {}", hash);
             // now that the repository is checked out and up to date process with the import
             List<ParsingResult<Csar>> results = processImport(csarGitRepository, csarGitCheckoutLocation, hash);
 
@@ -133,9 +142,7 @@ public class CsarGitService {
             // TODO best would be to provide with a better result to show that we didn't retried import
             return results;
         } finally {
-            if (git != null) {
-                git.close();
-            }
+            RepositoryManager.close(git);
         }
     }
 
@@ -143,31 +150,59 @@ public class CsarGitService {
         // find all the archives under the given hierarchy and zip them to create archives
         Path archiveZipRoot = tempZipDirPath.resolve(csarGitRepository.getId());
         Path archiveGitRoot = tempDirPath.resolve(csarGitRepository.getId());
-        Set<Path> archivePaths = csarFinderService.prepare(archiveGitRoot, archiveZipRoot, csarGitCheckoutLocation.getSubPath());
-
-        // TODO code review has to be completed to further cleanup below processing.
-        List<ParsingResult<Csar>> parsingResult = Lists.newArrayList();
-        try {
-            Map<CSARDependency, CsarDependenciesBean> csarDependenciesBeans = uploadService.preParsing(archivePaths);
-            List<CsarDependenciesBean> sorted = sort(csarDependenciesBeans);
-            for (CsarDependenciesBean csarBean : sorted) {
-                if (csarGitCheckoutLocation.getLastImportedHash() != null && csarGitCheckoutLocation.getLastImportedHash().equals(gitHash)) {
-                    if (csarService.getIfExists(csarBean.getSelf().getName(), csarBean.getSelf().getVersion()) != null) {
-                        // no commit since last import and the archive still exist in the repo, so do not import
-                        // TODO notify the user that the archive has already been imported
-                        continue;
-                    }
-                }
-                ParsingResult<Csar> result = uploadService.upload(csarBean.getPath(), CSARSource.GIT);
-                parsingResult.add(result);
-            }
-            return parsingResult;
-        } catch (ParsingException e) {
-            // TODO Actually add a parsing result with error.
-            throw new GitException("Failed to import archive from git as it cannot be parsed", e);
-        } catch (CSARVersionAlreadyExistsException e) {
-            return parsingResult;
+        if (csarGitCheckoutLocation.getSubPath() != null && !csarGitCheckoutLocation.getSubPath().isEmpty()) {
+            archiveGitRoot = archiveGitRoot.resolve(csarGitCheckoutLocation.getSubPath());
         }
+        Set<Path> archivePaths = csarFinderService.prepare(archiveGitRoot, archiveZipRoot);
+
+        List<ParsingResult<Csar>> parsingResults = Lists.newArrayList();
+
+        Map<CSARDependency, CsarDependenciesBean> csarDependenciesBeans = uploadService.preParsing(archivePaths, parsingResults);
+        List<CsarDependenciesBean> sorted = sort(csarDependenciesBeans);
+        for (CsarDependenciesBean csarBean : sorted) {
+            String archiveRepoPath = archiveZipRoot.relativize(csarBean.getPath().getParent()).toString();
+            if (csarGitCheckoutLocation.getLastImportedHash() != null && csarGitCheckoutLocation.getLastImportedHash().equals(gitHash)
+                    && csarService.get(csarBean.getSelf().getName(), csarBean.getSelf().getVersion()) != null) {
+                // no commit since last import and the archive still exist in the repo, so do not import
+                addAlreadyImportParsingResult(archiveRepoPath, parsingResults);
+                continue;
+            }
+            try {
+                // FIXME Add possibility to choose an workspace
+                ParsingResult<Csar> result = uploadService.upload(csarBean.getPath(), CSARSource.GIT, AlienConstants.GLOBAL_WORKSPACE_ID);
+                result.getContext().setFileName(archiveRepoPath + "/" + result.getContext().getFileName());
+                parsingResults.add(result);
+            } catch (ParsingException e) {
+                ParsingResult<Csar> failedResult = new ParsingResult<>();
+                failedResult.setContext(new ParsingContext(archiveRepoPath));
+                failedResult.getContext().setParsingErrors(e.getParsingErrors());
+                parsingResults.add(failedResult);
+                log.debug("Failed to import archive from git as it cannot be parsed", e);
+            } catch (AlreadyExistException | ToscaTypeAlreadyDefinedInOtherCSAR | CSARUsedInActiveDeployment e) {
+                ParsingResult<Csar> failedResult = new ParsingResult<>();
+                failedResult.setContext(new ParsingContext(archiveRepoPath));
+                failedResult.getContext().setParsingErrors(Lists.newArrayList(UploadExceptionUtil.parsingErrorFromException(e)));
+                parsingResults.add(failedResult);
+            }
+        }
+        return parsingResults;
+
+    }
+
+    /**
+     * Just add a parsing info to the list stating that the archive is already imported and
+     *
+     * @param archivePath The path of the archive in the repo.
+     * @param parsingResults The list of parsing results.
+     */
+    private void addAlreadyImportParsingResult(String archivePath, List<ParsingResult<Csar>> parsingResults) {
+        ParsingResult<Csar> result = new ParsingResult<>();
+        result.setContext(new ParsingContext(archivePath));
+        result.getContext().setParsingErrors(Lists.newArrayList(new ParsingError(ParsingErrorLevel.INFO, ErrorCode.CSAR_ALREADY_INDEXED,
+                "No new commit since last import and archive already indexed.", null, null, null, null
+
+        )));
+        parsingResults.add(result);
     }
 
     private List<CsarDependenciesBean> sort(Map<CSARDependency, CsarDependenciesBean> elements) {
@@ -182,13 +217,13 @@ public class CsarGitService {
             } else {
                 // complete the list of dependent elements
                 List<CSARDependency> toClears = Lists.newArrayList();
-                for (CSARDependency dependent : csar.getDependencies()) {
-                    CsarDependenciesBean providedDependency = elements.get(dependent);
+                for (CSARDependency dependency : csar.getDependencies()) {
+                    CsarDependenciesBean providedDependency = elements.get(dependency);
                     if (providedDependency == null) {
                         // remove the dependency as it may be in the alien repo
-                        toClears.add(dependent);
+                        toClears.add(dependency);
                     } else {
-                        providedDependency.getDependents().add(entry.getValue());
+                        providedDependency.getDependents().add(csar);
                     }
                 }
                 for (CSARDependency toClear : toClears) {
@@ -200,7 +235,7 @@ public class CsarGitService {
             }
         }
 
-        while (independents.size() > 0) {
+        while (!independents.isEmpty()) {
             CsarDependenciesBean independent = independents.remove(0);
             elements.remove(independent.getSelf()); // remove from the elements
             sortedCsars.add(independent); // element has no more dependencies

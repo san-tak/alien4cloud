@@ -2,10 +2,11 @@
 define(function (require) {
   'use strict';
   var modules = require('modules');
-  var _ = require('lodash');
 
-  modules.get('a4c-topology-editor').factory('topoEditArtifacts', [ 'topologyServices', '$upload',
-    function(topologyServices, $upload) {
+  require('scripts/topology/controllers/editor_artifact_modal');
+
+  modules.get('a4c-topology-editor').factory('topoEditArtifacts', [ '$uibModal', 'topologyServices',
+    function($uibModal, topologyServices) {
       var TopologyEditorMixin = function(scope) {
         this.scope = scope;
       };
@@ -13,52 +14,61 @@ define(function (require) {
       TopologyEditorMixin.prototype = {
         constructor: TopologyEditorMixin,
 
-        doUpload: function(file, artifactId) {
-          var uploadNodeTemplate = this.scope.selectedNodeTemplate;
-          if (_.undefined(this.scope.uploads)) {
-            this.scope.uploads = {};
-          }
-          this.scope.uploads[artifactId] = {
-            'isUploading': true,
-            'type': 'info'
-          };
-          var instance = this;
-          $upload.upload({
-            url: 'rest/latest/topologies/' + instance.scope.topology.topology.id + '/nodetemplates/' + uploadNodeTemplate.name + '/artifacts/' + artifactId,
-            file: file
-          }).progress(function(evt) {
-            instance.scope.uploads[artifactId].uploadProgress = parseInt(100.0 * evt.loaded / evt.total);
-          }).success(function(success) {
-            if (!success.error) {
-              instance.scope.uploads[artifactId].isUploading = false;
-              instance.scope.uploads[artifactId].type = 'success';
-              instance.scope.refreshTopology(success.data);
+        /**
+        * This method is triggered when the user select the artifact
+        */
+        onSelect: function(artifactName, artifact) {
+          var scope = this.scope;
+          topologyServices.availableRepositories({
+            topologyId: scope.topologyId
+          }, function(result) {
+              scope.availableRepositories = result.data;
+              var modalInstance = $uibModal.open({
+                templateUrl: 'views/topology/editor_artifact_modal.html',
+                controller: 'TopologyEditorArtifactModalCtrl',
+                resolve: {
+                  archiveContentTree: function() {
+                    return scope.topology.archiveContentTree;
+                  },
+                  availableRepositories: function() {
+                    return scope.availableRepositories;
+                  },
+                  artifact: function() {
+                    return artifact;
+                  },
+                  topology: function(){
+                    return scope.topology.topology;
+                  }
+                }
+              });
+
+              modalInstance.result.then(function(artifact) {
+                scope.execute({
+                    type: 'org.alien4cloud.tosca.editor.operations.nodetemplate.UpdateNodeDeploymentArtifactOperation',
+                    nodeName: scope.selectedNodeTemplate.name,
+                    artifactName: artifactName,
+                    artifactReference: artifact.reference,
+                    artifactRepository: artifact.repository,
+                    repositoryUrl: artifact.repositoryUrl,
+                    repositoryName: artifact.repositoryName,
+                    archiveName: artifact.archiveName,
+                    archiveVersion: artifact.archiveVersion
+                  }
+                );
+              });
             }
-          }).error(function(data, status) {
-            instance.scope.uploads[artifactId].type = 'error';
-            instance.scope.uploads[artifactId].error = {};
-            instance.scope.uploads[artifactId].error.code = status;
-            instance.scope.uploads[artifactId].error.message = 'An Error has occurred on the server!';
-          });
+          );
+
         },
 
-        onSelected: function($files, artifactId) {
-          var file = $files[0];
-          this.doUpload(file, artifactId);
-        },
-
-        // reset the artifact to the original nodetype value
-        reset: function(artifactId) {
-          var instance = this;
-          topologyServices.nodeTemplate.artifacts.resetArtifact({
-            topologyId: instance.scope.topology.topology.id,
-            nodeTemplateName: instance.scope.selectedNodeTemplate.name,
-            artifactId: artifactId
-          }, function success(result) {
-            if (result.error === null) {
-              instance.scope.refreshTopology(result.data);
+        // reset the artifact to the original value from node type
+        reset: function(artifactName) {
+          this.scope.execute({
+              type: 'org.alien4cloud.tosca.editor.operations.nodetemplate.ResetNodeDeploymentArtifactOperation',
+              nodeName: this.scope.selectedNodeTemplate.name,
+              artifactName: artifactName
             }
-          });
+          );
         }
       };
 

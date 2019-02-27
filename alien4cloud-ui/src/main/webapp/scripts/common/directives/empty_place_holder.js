@@ -9,9 +9,10 @@ define(function (require) {
       templateUrl: 'views/common/empty_place_holder.html',
       restrict: 'E',
       scope: {
-        'for': '=',
+        /*data to check for emptyness*/
         'data': '=',
-        'additionalMessage': '='
+        /*if provided, this message wil be displayed*/
+        'message': '='
       },
       link: function(scope) {
         scope._ = _;

@@ -7,18 +7,15 @@ import java.util.Map;
 
 import javax.inject.Inject;
 
-import alien4cloud.model.deployment.matching.MatchingConfiguration;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
+import alien4cloud.model.deployment.matching.MatchingConfiguration;
 import alien4cloud.model.orchestrators.locations.LocationResourceTemplate;
 import alien4cloud.orchestrators.plugin.ILocationConfiguratorPlugin;
 import alien4cloud.orchestrators.plugin.ILocationResourceAccessor;
 import alien4cloud.orchestrators.plugin.model.PluginArchive;
-import alien4cloud.plugin.PluginManager;
-import alien4cloud.plugin.model.ManagedPlugin;
-import alien4cloud.tosca.ArchiveParser;
 
 /**
  * Component that creates location configurer for a mock openstack cloud.
@@ -27,18 +24,14 @@ import alien4cloud.tosca.ArchiveParser;
 @Scope("prototype")
 public class MockLocationConfigurerFactory {
     @Inject
-    private ArchiveParser archiveParser;
-    @Inject
-    private PluginManager pluginManager;
-    @Inject
-    private ManagedPlugin selfContext;
-    @Inject
     private ApplicationContext applicationContext;
 
     public ILocationConfiguratorPlugin newInstance(String locationType) {
         if (MockOrchestratorFactory.OPENSTACK.equals(locationType)) {
-            MockOpenStackLocationConfigurer configurer = applicationContext.getBean(MockOpenStackLocationConfigurer.class);
-            return configurer;
+            return applicationContext.getBean(MockOpenStackLocationConfigurer.class);
+        }
+        if (MockOrchestratorFactory.AWS.equals(locationType)) {
+            return applicationContext.getBean(MockAmazonLocationConfigurer.class);
         }
         return new ILocationConfiguratorPlugin() {
             @Override
@@ -60,7 +53,6 @@ public class MockLocationConfigurerFactory {
             public List<LocationResourceTemplate> instances(ILocationResourceAccessor resourceAccessor) {
                 return null;
             }
-
 
         };
     }

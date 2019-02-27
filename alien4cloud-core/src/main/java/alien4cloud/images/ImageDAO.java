@@ -2,7 +2,10 @@ package alien4cloud.images;
 
 import java.awt.image.BufferedImage;
 import java.beans.IntrospectionException;
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -12,9 +15,8 @@ import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 import javax.imageio.ImageIO;
 
-import alien4cloud.component.repository.exception.CSARDirectoryCreationFailureException;
-import alien4cloud.exception.NotFoundException;
 import lombok.extern.slf4j.Slf4j;
+
 import org.elasticsearch.mapping.MappingBuilder;
 import org.springframework.beans.factory.annotation.Required;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Component;
 
 import alien4cloud.dao.ESGenericIdDAO;
 import alien4cloud.exception.IndexingServiceException;
+import alien4cloud.exception.NotFoundException;
 import alien4cloud.images.exception.ImageUploadException;
 import alien4cloud.utils.ImageQuality;
 import alien4cloud.utils.ImageResizeUtil;
@@ -128,6 +131,25 @@ public class ImageDAO extends ESGenericIdDAO implements IImageDAO {
     @Override
     public void delete(String id) {
         delete(ImageData.class, id);
+        // delete image from hard drive
+        safeDeleteFile(rootPath.resolve(id + ".png"));
+    }
+
+    @Override
+    public void deleteAll(String id) {
+        delete(id);
+        delete(getImageId(ImageQuality.QUALITY_16, id));
+        delete(getImageId(ImageQuality.QUALITY_32, id));
+        delete(getImageId(ImageQuality.QUALITY_64, id));
+        delete(getImageId(ImageQuality.QUALITY_128, id));
+    }
+
+    private void safeDeleteFile(Path file) {
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            log.error("Error when trying to delete image <" + file + ">", e);
+        }
     }
 
     private String getImageId(final ImageQuality imageQuality, final String id) {

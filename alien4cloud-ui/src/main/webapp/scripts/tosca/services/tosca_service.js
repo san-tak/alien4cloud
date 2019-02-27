@@ -11,6 +11,10 @@ define(function (require) {
       var networkType = 'tosca.relationships.Network';
       var attachedToType = 'tosca.relationships.AttachTo';
       var computeType = 'tosca.nodes.Compute';
+      var dockerType = 'tosca.nodes.Container.Application.DockerContainer';
+      var capabilityScalableName = 'tosca.capabilities.Scalable';
+      var capabilityClusterControllerName = 'org.alien4cloud.capabilities.ClusterController';
+
 
       var getScalingProperty = function(scalableCapability, propertyName) {
         var propertyEntry = scalableCapability.propertiesMap[propertyName];
@@ -32,9 +36,19 @@ define(function (require) {
       return {
         standardInterfaceName: 'tosca.interfaces.node.lifecycle.Standard',
 
-        getScalingPolicy: function(node) {
-          if (_.defined(node.capabilitiesMap) && _.defined(node.capabilitiesMap.scalable)) {
-            var scalableCapability = node.capabilitiesMap.scalable.value;
+        getScalingPolicy: function(node, capabilityTypes) {
+          var scalableCapability = this.getCapabilityByType(node, capabilityScalableName, capabilityTypes);
+          return this.getScalableInfo(scalableCapability);
+        },
+
+        getClusterControllerPolicy: function(node, capabilityTypes) {
+          var scalableCapabilityEntry = this.getCapabilityByType(node, capabilityClusterControllerName, capabilityTypes);
+          return this.getScalableInfo(scalableCapabilityEntry);
+        },
+
+        getScalableInfo: function(scalableCapabilityEntry) {
+          if (_.defined(scalableCapabilityEntry)) {
+            var scalableCapability = scalableCapabilityEntry.value;
             var min = getScalingProperty(scalableCapability, 'min_instances');
             var max = getScalingProperty(scalableCapability, 'max_instances');
             var init = getScalingProperty(scalableCapability, 'default_instances');
@@ -50,18 +64,42 @@ define(function (require) {
         },
 
         /**
+        * Get the first capability matching the requested type.
+        */
+        getCapabilityByType: function(node, expectedType, capabilityTypes) {
+          var self = this;
+          var matchingCapability;
+          _.each(node.capabilities, function(capability) {
+            if(self.isOneOfType([expectedType], capability.value.type, capabilityTypes)) {
+              matchingCapability = capability;
+              return false;
+            }
+          });
+          return matchingCapability;
+        },
+
+        getTag: function(tagName, tags) {
+          return _.get(_.find(tags, {name:tagName}),'value');
+        },
+
+        /**
         * Return the icon from a TOSCA element's tags.
         *
-        * @param tags The map of tags.
+        * @param tags The list of tags.
         * @return the value of the icon tag.
         */
         getIcon: function(tags) {
-          for ( var i in tags) {
-            var tag = tags[i];
-            if (tag.name === 'icon') {
-              return tag.value;
-            }
-          }
+          return  _.get(_.find(tags, {name:'icon'}),'value');
+        },
+
+        /**
+        * Return the icon from a TOSCA element's tags.
+        *
+        * @param element The element for which to retrieve the icon.
+        * @return the value of the icon tag.
+        */
+        getElementIcon: function(element) {
+          return this.getIcon(_.get(element, 'tags'));
         },
 
         /**
@@ -88,6 +126,17 @@ define(function (require) {
         */
         isComputeType: function(nodeTypeName, nodeTypes) {
           return this.isOneOfType([computeType], nodeTypeName, nodeTypes);
+        },
+
+        /**
+        * Checks if a node type is a Compute node.
+        *
+        * @param nodeTypeName The name of the node type.
+        * @param nodeTypes A map of available node types. It must contains the actual nodeTypeName.
+        * @return true if the type is a tosca compute type.
+        */
+        isDockerType: function(nodeTypeName, nodeTypes) {
+          return this.isOneOfType([dockerType], nodeTypeName, nodeTypes);
         },
 
         /**
@@ -156,28 +205,40 @@ define(function (require) {
         *
         * @param type The type of the relationship for which to generate a name.
         * @param targetName The name of the relationship target.
+        * @param targetedCapabilityName The name of the relationship target's capability.
         * @return the generated name of the relationship.
         */
-        generateRelationshipName: function(type, targetName) {
-          return _.camelCase(this.simpleName(type)) + _.capitalize(_.camelCase(targetName));
+        generateRelationshipName: function(type, targetName, targetedCapabilityName) {
+          return _.camelCase(this.simpleName(type)) + _.capitalize(_.camelCase(targetName)) + _.capitalize(targetedCapabilityName);
         },
 
         /**
-        * Generate a unique node template name from the given node type name and based on a map of existing node templates.
-        * @param type The name of the node type.
-        * @param nodeTemplates The map of existing node templates (to avoid duplicating a node template name).
+        * Generate a unique template name from the given type name and based on a map of existing templates.
+        * @param type The name of the type.
+        * @param templates The map of existing templates (to avoid duplicating a template name).
         */
-        generateNodeTemplateName: function(type, nodeTemplates) {
+        generateTemplateName: function(type, templates) {
           var baseName = this.simpleName(type);
+          // First we have to normalize the node template name as a4c restrict special character usage
+          baseName = this.getToscaName(baseName);
           var i = 1;
           var tempName = baseName;
-          if(_.defined(nodeTemplates)) {
-            while (nodeTemplates.hasOwnProperty(tempName)) {
+          if(_.defined(templates)) {
+            while (templates.hasOwnProperty(tempName)) {
               i++;
               tempName = baseName + '_' + i;
             }
           }
           return tempName;
+        },
+
+        toscaNamePattern: /^\w+$/,
+        toscaNameReplacePattern: /\W/g,
+        /**
+        * Get the name in a format that is accepted by alien4cloud.
+        */
+        getToscaName: function(name) {
+          return this.toscaNamePattern.test(name) ? name : name.replace(this.toscaNameReplacePattern, '_');
         },
 
         /**
@@ -201,6 +262,50 @@ define(function (require) {
           }
 
           return founds;
+        },
+
+        /**
+        * Get all hosted on relationships on a given node template.
+        */
+        getHostedOnRelationships: function(nodeTemplate, relationshipTypes) {
+          var self = this;
+          var hostedOnRelationships = self.getRelationships(nodeTemplate, function(relationship) {
+            return self.isHostedOnType(relationship.type, relationshipTypes);
+          });
+          return hostedOnRelationships;
+        },
+
+        /**
+        * Get all attached to relationships on a given node template.
+        */
+        getAttachedToRelationships: function(nodeTemplate, relationshipTypes) {
+          var self = this;
+          var relationships = self.getRelationships(nodeTemplate, function(relationship) {
+            return self.isAttachedToType(relationship.type, relationshipTypes);
+          });
+          return relationships;
+        },
+
+        /**
+        * Get all attached to relationships on a given node template.
+        */
+        getNetworkRelationships: function(nodeTemplate, relationshipTypes) {
+          var self = this;
+          var relationships = self.getRelationships(nodeTemplate, function(relationship) {
+            return self.isNetworkType(relationship.type, relationshipTypes);
+          });
+          return relationships;
+        },
+
+        /**
+        * Get all depends on to relationships on a given node template.
+        */
+        getDependsOnRelationships: function(nodeTemplate, relationshipTypes) {
+          var self = this;
+          var dependsOnRelationships = self.getRelationships(nodeTemplate, function(relationship) {
+            return !self.isHostedOnType(relationship.type, relationshipTypes) && !self.isNetworkType(relationship.type, relationshipTypes);
+          });
+          return dependsOnRelationships;
         }
       };
     } // function

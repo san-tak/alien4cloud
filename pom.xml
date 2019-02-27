@@ -2,15 +2,18 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>alien4cloud</groupId>
   <artifactId>alien4cloud-parent</artifactId>
-  <version>1.3.0-SM1-SNAPSHOT</version>
+  <version>2.2.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>Application LIfecycle ENabler parent project.</name>
-  <description>Application LIfecycle ENabler is an application that allows you to manage your application's lifecycle on a cloud environment.</description>
+  <description>Application LIfecycle ENabler is an application that allows you to manage your application's lifecycle
+    on a cloud environment.
+  </description>
   <modules>
     <module>alien4cloud-common</module>
     <module>alien4cloud-tosca</module>
     <module>alien4cloud-dao</module>
     <module>alien4cloud-security</module>
+    <module>alien4cloud-test-common</module>
     <module>alien4cloud-core</module>
     <module>alien4cloud-mock-paas-provider-plugin</module>
     <module>alien4cloud-rest-api</module>
@@ -23,10 +26,10 @@
     <sonar.java.coveragePlugin>jacoco</sonar.java.coveragePlugin>
     <sonar.dynamicAnalysis>reuseReports</sonar.dynamicAnalysis>
     <sonar.jacoco.reportPath>${project.basedir}/target/jacoco.exec</sonar.jacoco.reportPath>
-    <sonar.jacoco.itReportPath>${project.basedir}/target/jacoco.exec</sonar.jacoco.itReportPath>
+    <sonar.jacoco.itReportPath>${project.basedir}/target/jacoco-it.exec</sonar.jacoco.itReportPath>
 
     <!-- Utilities -->
-    <lombok.version>1.14.4</lombok.version>
+    <lombok.version>1.16.18</lombok.version>
     <guava.version>15.0</guava.version>
     <commons.fileupload.version>1.2.2</commons.fileupload.version>
     <commons-io.version>1.3.2</commons-io.version>
@@ -36,26 +39,28 @@
     <javax.el-api.version>3.0.0</javax.el-api.version>
     <javax.el-impl.version>2.2.6</javax.el-impl.version>
     <servlet-api.version>3.1.0</servlet-api.version>
-    <httpclient.version>4.3.2</httpclient.version>
+    <httpclient.version>4.5.6</httpclient.version>
+    <httpasyncclient.version>4.1.4</httpasyncclient.version>
     <commons-cli.version>1.2</commons-cli.version>
-    <commons-lang.version>3.3.2</commons-lang.version>
+    <commons-lang.version>3.5</commons-lang.version>
     <commons-collections.version>4.1</commons-collections.version>
     <commons-compress.version>1.9</commons-compress.version>
+    <spring.fsm.version>2.0.3.RELEASE</spring.fsm.version>
+    <rxjava.version>2.2.4</rxjava.version>
 
     <!-- JSON and YAML Parsing -->
-    <jackson.version>2.3.1</jackson.version>
-    <jackson.annotations.version>2.3.0</jackson.annotations.version>
+    <jackson.version>2.9.3</jackson.version>
     <!-- Yaml for properties -->
-    <snakeyaml.version>1.12</snakeyaml.version>
+    <snakeyaml.version>1.18</snakeyaml.version>
 
     <!-- XML Parsing -->
     <jaxb-api.version>2.0</jaxb-api.version>
     <jaxb.version>2.1.9</jaxb.version>
 
     <!-- Spring (DI / Rest / Security) -->
-    <spring-boot.version>1.2.1.RELEASE</spring-boot.version>
-    <spring.version>4.1.4.RELEASE</spring.version>
-    <spring.security.version>3.2.5.RELEASE</spring.security.version>
+    <spring-boot.version>1.5.18.RELEASE</spring-boot.version>
+    <spring.version>4.3.5.RELEASE</spring.version>
+    <spring.security.version>4.2.3.RELEASE</spring.security.version>
     <spring.ldap.version>2.0.1.RELEASE</spring.ldap.version>
     <aspectj.version>1.7.4</aspectj.version>
 
@@ -64,28 +69,32 @@
     <metrics-spring.version>3.0.1</metrics-spring.version>
 
     <!-- Elastic Search mapper (reference the elastic search version actually). -->
-    <es-mapping.version>1.5.1</es-mapping.version>
+    <es-mapping.version>1.7.8</es-mapping.version>
+    <elasticsearch.version>1.7.0</elasticsearch.version>
     <!-- Groovy is required for ElasticSearch to run as server in order to process scripts -->
     <groovy.version>2.3.5</groovy.version>
 
     <!-- Logging -->
-    <log4j.version>1.2.16</log4j.version>
-    <slf4j.version>1.7.5</slf4j.version>
+    <log4j.version>2.8.2</log4j.version>
+    <slf4j.version>1.7.24</slf4j.version>
 
     <!-- Documentation -->
     <springfox-swagger2.version>2.3.1</springfox-swagger2.version>
 
     <!-- Tests -->
-    <junit.version>4.11</junit.version>
+    <junit.version>4.12</junit.version>
     <mockito.version>1.9.0</mockito.version>
     <springockito.version>1.0.4</springockito.version>
+    <cucumber.version>1.2.2</cucumber.version>
+    <assertj-core.version>3.6.2</assertj-core.version>
 
     <!-- Build tools -->
-    <java.version>1.7</java.version>
+    <java.version>1.8</java.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.version>2.3.2</maven.compiler.version>
     <maven.assembly.version>2.4</maven.assembly.version>
-    <jetty.version>9.2.2.v20140723</jetty.version>
+    <jetty.version>9.4.12.v20180830</jetty.version>
+    <jetty-jsp.version>2.2.0.v201112011158</jetty-jsp.version>
     <maven.cargo.version>1.4.15</maven.cargo.version>
   </properties>
 
@@ -137,9 +146,9 @@
         <scope>provided</scope>
       </dependency>
       <dependency>
-        <groupId>org.eclipse.jetty</groupId>
-        <artifactId>jetty-jsp</artifactId>
-        <version>${jetty.version}</version>
+        <groupId>org.eclipse.jetty.orbit</groupId>
+        <artifactId>javax.servlet.jsp</artifactId>
+        <version>${jetty-jsp.version}</version>
         <scope>provided</scope>
       </dependency>
       <dependency>
@@ -157,12 +166,6 @@
       <dependency>
         <groupId>org.eclipse.jetty.websocket</groupId>
         <artifactId>websocket-server</artifactId>
-        <version>${jetty.version}</version>
-        <scope>provided</scope>
-      </dependency>
-      <dependency>
-        <groupId>org.eclipse.jetty.orbit</groupId>
-        <artifactId>javax.servlet.jsp</artifactId>
         <version>${jetty.version}</version>
         <scope>provided</scope>
       </dependency>
@@ -236,7 +239,7 @@
       <dependency>
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-annotations</artifactId>
-        <version>${jackson.annotations.version}</version>
+        <version>${jackson.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.commons</groupId>
@@ -248,11 +251,11 @@
         <artifactId>commons-collections4</artifactId>
         <version>${commons-collections.version}</version>
       </dependency>
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-compress</artifactId>
-            <version>${commons-compress.version}</version>
-        </dependency>
+      <dependency>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-compress</artifactId>
+        <version>${commons-compress.version}</version>
+      </dependency>
       <dependency>
         <groupId>org.yaml</groupId>
         <artifactId>snakeyaml</artifactId>
@@ -265,6 +268,16 @@
         <version>${velocity.version}</version>
       </dependency>
 
+      <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-core</artifactId>
+        <version>${spring.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-expression</artifactId>
+        <version>${spring.version}</version>
+      </dependency>
       <dependency>
         <groupId>org.springframework</groupId>
         <artifactId>spring-beans</artifactId>
@@ -345,6 +358,18 @@
       </dependency>
 
       <dependency>
+        <groupId>org.springframework.statemachine</groupId>
+        <artifactId>spring-statemachine-core</artifactId>
+        <version>${spring.fsm.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>io.reactivex.rxjava2</groupId>
+        <artifactId>rxjava</artifactId>
+        <version>${rxjava.version}</version>
+      </dependency>
+
+      <dependency>
         <groupId>org.springframework.ldap</groupId>
         <artifactId>spring-ldap-core</artifactId>
         <version>${spring.ldap.version}</version>
@@ -385,6 +410,11 @@
         <version>${es-mapping.version}</version>
       </dependency>
       <dependency>
+        <groupId>org.elasticsearch</groupId>
+        <artifactId>elasticsearch</artifactId>
+        <version>${elasticsearch.version}</version>
+      </dependency>
+      <dependency>
         <groupId>org.codehaus.groovy</groupId>
         <artifactId>groovy-all</artifactId>
         <version>${groovy.version}</version>
@@ -393,6 +423,11 @@
         <groupId>org.apache.httpcomponents</groupId>
         <artifactId>httpclient</artifactId>
         <version>${httpclient.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.httpcomponents</groupId>
+        <artifactId>httpasyncclient</artifactId>
+        <version>${httpasyncclient.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.httpcomponents</groupId>
@@ -405,9 +440,20 @@
         <version>${commons-cli.version}</version>
       </dependency>
 
+      <!-- Logging -->
       <dependency>
-        <groupId>log4j</groupId>
-        <artifactId>log4j</artifactId>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-api</artifactId>
+        <version>${log4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-core</artifactId>
+        <version>${log4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-slf4j-impl</artifactId>
         <version>${log4j.version}</version>
       </dependency>
       <dependency>
@@ -417,7 +463,7 @@
       </dependency>
       <dependency>
         <groupId>org.slf4j</groupId>
-        <artifactId>slf4j-log4j12</artifactId>
+        <artifactId>slf4j-ext</artifactId>
         <version>${slf4j.version}</version>
       </dependency>
 
@@ -478,6 +524,12 @@
         <version>${spring.version}</version>
         <scope>test</scope>
       </dependency>
+      <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-core</artifactId>
+        <version>${assertj-core.version}</version>
+        <scope>test</scope>
+      </dependency>
     </dependencies>
 
   </dependencyManagement>
@@ -512,6 +564,10 @@
     <pluginRepository>
       <id>repo.opensource.fastconnect.org</id>
       <url>https://fastconnect.org/maven/content/repositories/opensource</url>
+    </pluginRepository>
+    <pluginRepository>
+      <id>repo.opensource.snapshot.fastconnect.org</id>
+      <url>https://fastconnect.org/maven/content/repositories/opensource-snapshot</url>
     </pluginRepository>
   </pluginRepositories>
 
@@ -557,6 +613,23 @@
       </plugin>
 
       <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>2.9</version>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <additionalparam>-Xdoclint:none</additionalparam>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
         <groupId>external.atlassian.jgitflow</groupId>
         <artifactId>jgitflow-maven-plugin</artifactId>
         <version>1.0-m5.1-alien</version>
@@ -567,7 +640,8 @@
         <artifactId>maven-eclipse-plugin</artifactId>
         <version>2.9</version>
         <configuration>
-          <downloadSources>true</downloadSources> <downloadJavadocs>false</downloadJavadocs>
+          <downloadSources>true</downloadSources>
+          <downloadJavadocs>false</downloadJavadocs>
         </configuration>
       </plugin>
 
@@ -653,10 +727,11 @@
           <plugin>
             <groupId>org.jacoco</groupId>
             <artifactId>jacoco-maven-plugin</artifactId>
-            <version>0.6.4.201312101107</version>
+            <version>0.7.7.201606060606</version>
             <configuration>
               <includes>
                 <include>alien4cloud.*</include>
+                <include>org.alien4cloud.*</include>
               </includes>
               <destFile>${sonar.jacoco.reportPath}</destFile>
               <dataFile>${sonar.jacoco.reportPath}</dataFile>

@@ -1,46 +1,58 @@
 package alien4cloud.orchestrators.locations.services;
 
+import static alien4cloud.dao.FilterUtil.fromKeyValueCouples;
+import static alien4cloud.dao.FilterUtil.singleKeyFilter;
 import static alien4cloud.utils.AlienUtils.array;
 
 import java.util.Collection;
 import java.util.Date;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
 import javax.annotation.Resource;
 import javax.inject.Inject;
 
-import lombok.extern.slf4j.Slf4j;
-
+import org.alien4cloud.tosca.model.CSARDependency;
+import org.alien4cloud.tosca.model.Csar;
+import org.alien4cloud.tosca.model.types.NodeType;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import alien4cloud.component.ICSARRepositorySearchService;
 import alien4cloud.dao.IGenericSearchDAO;
 import alien4cloud.dao.model.GetMultipleDataResult;
 import alien4cloud.events.LocationTemplateCreated;
 import alien4cloud.exception.AlreadyExistException;
+import alien4cloud.exception.LocationSupportException;
 import alien4cloud.exception.MissingCSARDependenciesException;
 import alien4cloud.exception.NotFoundException;
 import alien4cloud.model.common.MetaPropConfiguration;
+import alien4cloud.model.common.MetaPropertyTarget;
 import alien4cloud.model.common.Usage;
-import alien4cloud.model.components.CSARDependency;
-import alien4cloud.model.components.Csar;
-import alien4cloud.model.components.IndexedNodeType;
 import alien4cloud.model.deployment.Deployment;
 import alien4cloud.model.orchestrators.Orchestrator;
 import alien4cloud.model.orchestrators.OrchestratorState;
 import alien4cloud.model.orchestrators.locations.Location;
 import alien4cloud.model.orchestrators.locations.LocationResourceTemplate;
+import alien4cloud.model.orchestrators.locations.LocationSupport;
+import alien4cloud.orchestrators.locations.events.AfterLocationCreated;
+import alien4cloud.orchestrators.locations.events.AfterLocationDeleted;
+import alien4cloud.orchestrators.locations.events.BeforeLocationDeleted;
+import alien4cloud.orchestrators.locations.events.OnLocationResourceChangeEvent;
 import alien4cloud.orchestrators.plugin.ILocationAutoConfigurer;
 import alien4cloud.orchestrators.plugin.ILocationConfiguratorPlugin;
 import alien4cloud.orchestrators.plugin.ILocationResourceAccessor;
@@ -48,16 +60,10 @@ import alien4cloud.orchestrators.plugin.IOrchestratorPlugin;
 import alien4cloud.orchestrators.plugin.IOrchestratorPluginFactory;
 import alien4cloud.orchestrators.services.OrchestratorService;
 import alien4cloud.paas.OrchestratorPluginService;
-import alien4cloud.security.AuthorizationUtil;
-import alien4cloud.security.model.DeployerRole;
-import alien4cloud.topology.TopologyUtils;
 import alien4cloud.utils.AlienUtils;
 import alien4cloud.utils.MapUtil;
 import alien4cloud.utils.PropertyUtil;
-
-import com.google.common.base.Objects;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Manages a locations.
@@ -81,6 +87,14 @@ public class LocationService {
     @Inject
     private ApplicationContext applicationContext;
 
+    public Location getLocation(String orchestratorId, String locationId) {
+        Location location = getOrFail(locationId);
+        if (!Objects.equals(location.getOrchestratorId(), orchestratorId)) {
+            throw new NotFoundException("Orchestrator id " + orchestratorId + " does not exist or does not have the location " + locationId);
+        }
+        return location;
+    }
+
     /**
      * Auto-configure locations using the given location auto-configurer.
      *
@@ -102,6 +116,19 @@ public class LocationService {
     }
 
     /**
+     * ensure that we cannot create more locations than supported by the orchestrator
+     * 
+     * @param orchestratorId
+     */
+    private void ensureMultipleLocations(String orchestratorId) {
+        LocationSupport locationSupport = orchestratorService.getLocationSupport(orchestratorId);
+        List<Location> locations = getAll(orchestratorId);
+        if (!locationSupport.isMultipleLocations() && !locations.isEmpty()) {
+            throw new LocationSupportException("The orchestrator <" + orchestratorId + "> already has a location and does'nt support multiple locations.");
+        }
+    }
+
+    /**
      * Add a new locations for a given orchestrator.
      */
     public String create(String orchestratorId, String locationName, String infrastructureType) {
@@ -110,12 +137,17 @@ public class LocationService {
             // we cannot configure locations for orchestrator that are not connected.
             // TODO throw exception
         }
+
+        ensureMultipleLocations(orchestratorId);
+
         Location location = new Location();
         location.setId(UUID.randomUUID().toString());
         location.setName(locationName);
         location.setOrchestratorId(orchestratorId);
 
         createLocation(orchestrator, location, infrastructureType);
+
+        publisher.publishEvent(new AfterLocationCreated(this, location));
 
         return location.getId();
     }
@@ -134,19 +166,23 @@ public class LocationService {
         // initialize meta properties
         location.setMetaProperties(Maps.<String, String> newHashMap());
         // add existing meta properties to the cloud
-        GetMultipleDataResult<MetaPropConfiguration> result = alienDAO.find(MetaPropConfiguration.class, null, Integer.MAX_VALUE);
+        GetMultipleDataResult<MetaPropConfiguration> result = alienDAO.find(MetaPropConfiguration.class, singleKeyFilter("target", MetaPropertyTarget.LOCATION),
+                Integer.MAX_VALUE);
         for (MetaPropConfiguration element : result.getData()) {
-            if (element.getTarget().toString().equals("cloud")) {
-                location.setMetaProperties(Maps.<String, String> newHashMap());
+            if (Objects.equals(element.getTarget(), MetaPropertyTarget.LOCATION)) {
                 // we only support string values for meta properties
                 PropertyUtil.setScalarDefaultValueOrNull(location.getMetaProperties(), element.getId(), element.getDefault());
-                log.debug("Adding meta property <{}> to the new location <{}> ", element.getName(), location.getName());
+                log.debug("Added meta property [ {} ] to the new location [ {} ] ", element.getName(), location.getName());
             }
         }
 
         // save the new location
         alienDAO.save(location);
-        autoConfigure(orchestrator, location);
+        try {
+            autoConfigure(orchestrator, location);
+        } catch (UnsupportedOperationException e) {
+            // do nothing
+        }
 
         // We call the LocationRessourceService to check the dependencies
         try {
@@ -163,15 +199,14 @@ public class LocationService {
      *
      * @param locationId Id of the location.
      */
-    public List<LocationResourceTemplate> autoConfigure(String locationId) {
+    public List<LocationResourceTemplate> autoConfigure(String locationId) throws UnsupportedOperationException {
         Location location = getOrFail(locationId);
         Orchestrator orchestrator = orchestratorService.getOrFail(location.getOrchestratorId());
 
         List<LocationResourceTemplate> generatedLocationResources = autoConfigure(orchestrator, location);
 
         if (CollectionUtils.isEmpty(generatedLocationResources)) {
-            // if the orchestrator doesn't support auto-configuration
-            // TODO throw exception or just return false ?
+            generatedLocationResources = Lists.newArrayList();
         }
 
         return generatedLocationResources;
@@ -184,7 +219,7 @@ public class LocationService {
      * @param location The location to auto-configure
      * @return the List of {@link LocationResourceTemplate} generated from the location auto-configuration call, null is a valid answer.
      */
-    private List<LocationResourceTemplate> autoConfigure(Orchestrator orchestrator, Location location) {
+    private List<LocationResourceTemplate> autoConfigure(Orchestrator orchestrator, Location location) throws UnsupportedOperationException {
         // get the orchestrator plugin instance
         IOrchestratorPlugin orchestratorInstance = (IOrchestratorPlugin) orchestratorPluginService.getOrFail(orchestrator.getId());
         ILocationConfiguratorPlugin configuratorPlugin = orchestratorInstance.getConfigurator(location.getInfrastructureType());
@@ -203,21 +238,17 @@ public class LocationService {
                 template.setLocationId(location.getId());
                 template.setGenerated(true);
                 template.setEnabled(true);
-                IndexedNodeType nodeType = csarRepoSearchService.getRequiredElementInDependencies(IndexedNodeType.class, template.getTemplate().getType(),
+                NodeType nodeType = csarRepoSearchService.getRequiredElementInDependencies(NodeType.class, template.getTemplate().getType(),
                         location.getDependencies());
                 nodeType.getDerivedFrom().add(0, template.getTemplate().getType());
                 template.setTypes(nodeType.getDerivedFrom());
-                // FIXME Workaround to remove default scalable properties from compute
-                TopologyUtils.setNullScalingPolicy(template.getTemplate(), nodeType);
-
                 LocationTemplateCreated event = new LocationTemplateCreated(this);
                 event.setTemplate(template);
                 event.setLocation(location);
-                event.setNodeType(nodeType);
+                event.setToscaType(nodeType);
                 applicationContext.publishEvent(event);
             }
             alienDAO.save(templates.toArray(new LocationResourceTemplate[templates.size()]));
-            location.setLastUpdateDate(new Date());
             alienDAO.save(location);
         }
         return templates;
@@ -266,27 +297,24 @@ public class LocationService {
         return locations;
     }
 
+    @Inject
+    private ApplicationEventPublisher publisher;
+
     /**
      * Delete a locations.
      *
      * @param id id of the locations to delete.
      * @return true if the location was successfully , false if not.
      */
-    public boolean delete(String orchestratorId, String id) {
+    public synchronized boolean delete(String orchestratorId, String id) {
         Orchestrator orchestrator = orchestratorService.getOrFail(orchestratorId);
-        if (!OrchestratorState.CONNECTED.equals(orchestrator.getState())) {
-            // we cannot configure locations for orchestrator that are not connected.
-            // TODO throw exception
-        }
 
-        Map<String, String[]> filters = Maps.newHashMap();
-        addFilter(filters, "locationIds", id);
-        addFilter(filters, "endDate", "null");
-        long count = alienDAO.count(Deployment.class, null, filters);
-        if (count > 0) {
+        if (alienDAO.count(Deployment.class, null, fromKeyValueCouples("orchestratorId", orchestratorId, "locationIds", id, "endDate", null)) > 0) {
             return false;
         }
         Location location = getOrFail(id);
+
+        publisher.publishEvent(new BeforeLocationDeleted(this, location.getId()));
 
         // delete all location resources for the given location
         alienDAO.delete(LocationResourceTemplate.class, QueryBuilders.termQuery("locationId", id));
@@ -298,6 +326,8 @@ public class LocationService {
             // TODO what to do when some archives were not deleted?
             log.warn("Some archives for location were not deleted! \n" + usages);
         }
+
+        publisher.publishEvent(new AfterLocationDeleted(this, location.getId()));
 
         return true;
     }
@@ -328,33 +358,22 @@ public class LocationService {
 
     /**
      * Retrieve location given a list of ids, and a specific context
-     * Only retrieves the authorized ones.
      *
      * @param fetchContext The fetch context to recover only the required field (Note that this should be simplified to directly use the given field...).
      * @param ids array of id of the applications to find
-     * @return Map of locations that has the given ids and for which the user is authorized (key is application Id), or null if no location matching the
+     * @return Map of locations that has the given ids and (key is application Id), or null if no location matching the
      *         request is found.
      */
-    public Map<String, Location> findByIdsIfAuthorized(String fetchContext, String... ids) {
+    public Map<String, Location> findByIds(String fetchContext, String... ids) {
         List<Location> results = alienDAO.findByIdsWithContext(Location.class, fetchContext, ids);
         if (results == null) {
             return null;
         }
         Map<String, Location> locations = Maps.newHashMap();
-        Iterator<Location> iterator = results.iterator();
-        while (iterator.hasNext()) {
-            Location location = iterator.next();
-            if (!AuthorizationUtil.hasAuthorizationForLocation(location, DeployerRole.values())) {
-                iterator.remove();
-                continue;
-            }
+        for (Location location : results) {
             locations.put(location.getId(), location);
         }
         return locations.isEmpty() ? null : locations;
-    }
-
-    private void addFilter(Map<String, String[]> filters, String property, String... values) {
-        filters.put(property, values);
     }
 
     /**
@@ -364,7 +383,7 @@ public class LocationService {
      * @param oldName
      */
     public synchronized void ensureNameUnicityAndSave(Location location, String oldName) {
-        if (StringUtils.isBlank(oldName) || !Objects.equal(location.getName(), oldName)) {
+        if (StringUtils.isBlank(oldName) || !Objects.equals(location.getName(), oldName)) {
             // check that a location of this name and managed by the same orchestrator doesn't already exists
             QueryBuilder mustQuery = QueryBuilders.boolQuery().must(QueryBuilders.termQuery("name", location.getName()))
                     .must(QueryBuilders.termQuery("orchestratorId", location.getOrchestratorId()));
@@ -375,7 +394,19 @@ public class LocationService {
         alienDAO.save(location);
     }
 
+    public void save(Location location) {
+        alienDAO.save(location);
+    }
+
     private void ensureNameUnicityAndSave(Location location) {
         ensureNameUnicityAndSave(location, null);
+    }
+
+    @EventListener
+    public synchronized void onLocationResourceUpdated(OnLocationResourceChangeEvent event) {
+        // When a location resource changes we do update the location last edition date
+        Location location = getOrFail(event.getLocationId());
+        location.setLastUpdateDate(new Date());
+        alienDAO.save(location);
     }
 }

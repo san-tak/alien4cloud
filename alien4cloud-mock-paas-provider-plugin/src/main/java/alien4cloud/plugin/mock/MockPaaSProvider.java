@@ -1,33 +1,61 @@
 package alien4cloud.plugin.mock;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Random;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import javax.annotation.PreDestroy;
 import javax.annotation.Resource;
+import javax.inject.Inject;
 
+import org.alien4cloud.tosca.catalog.index.IToscaTypeSearchService;
+import org.alien4cloud.tosca.model.templates.Capability;
+import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.templates.RelationshipTemplate;
+import org.alien4cloud.tosca.model.templates.ScalingPolicy;
+import org.alien4cloud.tosca.model.templates.Topology;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.model.types.RelationshipType;
+import org.alien4cloud.tosca.normative.constants.NormativeComputeConstants;
+import org.alien4cloud.tosca.normative.constants.NormativeRelationshipConstants;
+import org.alien4cloud.tosca.utils.TopologyUtils;
+import org.alien4cloud.tosca.utils.ToscaTypeUtils;
 import org.elasticsearch.common.collect.Maps;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 
-import alien4cloud.component.CSARRepositorySearchService;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.components.IndexedRelationshipType;
+import alien4cloud.dao.MonitorESDAO;
+import alien4cloud.deployment.DeploymentLoggingService;
 import alien4cloud.model.deployment.Deployment;
-import alien4cloud.model.topology.*;
 import alien4cloud.paas.IPaaSCallback;
 import alien4cloud.paas.exception.PluginConfigurationException;
-import alien4cloud.paas.model.*;
+import alien4cloud.paas.model.AbstractMonitorEvent;
+import alien4cloud.paas.model.DeploymentStatus;
+import alien4cloud.paas.model.InstanceInformation;
+import alien4cloud.paas.model.InstanceStatus;
+import alien4cloud.paas.model.NodeOperationExecRequest;
+import alien4cloud.paas.model.PaaSDeploymentContext;
+import alien4cloud.paas.model.PaaSDeploymentLog;
+import alien4cloud.paas.model.PaaSDeploymentLogLevel;
+import alien4cloud.paas.model.PaaSDeploymentStatusMonitorEvent;
+import alien4cloud.paas.model.PaaSInstancePersistentResourceMonitorEvent;
+import alien4cloud.paas.model.PaaSInstanceStateMonitorEvent;
+import alien4cloud.paas.model.PaaSMessageMonitorEvent;
+import alien4cloud.paas.model.PaaSTopologyDeploymentContext;
 import alien4cloud.paas.plan.ToscaNodeLifecycleConstants;
 import alien4cloud.rest.utils.JsonUtil;
-import alien4cloud.topology.TopologyUtils;
-import alien4cloud.tosca.ToscaUtils;
 import alien4cloud.tosca.normative.NormativeBlockStorageConstants;
-import alien4cloud.tosca.normative.NormativeComputeConstants;
-import alien4cloud.tosca.normative.NormativeRelationshipConstants;
+import alien4cloud.utils.MapUtil;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -46,8 +74,14 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
 
     private final List<AbstractMonitorEvent> toBeDeliveredEvents = Collections.synchronizedList(new ArrayList<AbstractMonitorEvent>());
 
-    @Resource
-    private CSARRepositorySearchService csarRepoSearchService;
+    @Inject
+    private IToscaTypeSearchService toscaTypeSearchService;
+
+    @Resource(name = "alien-monitor-es-dao")
+    private MonitorESDAO alienMonitorDao;
+
+    @Inject
+    private DeploymentLoggingService deploymentLoggingService;
 
     private static final String BAD_APPLICATION_THAT_NEVER_WORKS = "BAD-APPLICATION";
 
@@ -97,15 +131,15 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
         return new InstanceInformation(ToscaNodeLifecycleConstants.INITIAL, InstanceStatus.PROCESSING, attributes, runtimeProperties, outputs);
     }
 
-    private ScalingPolicy getScalingPolicy(String id, Map<String, NodeTemplate> nodeTemplates) {
+    private ScalingPolicy getScalingPolicy(String nodeTemplateId, Map<String, NodeTemplate> nodeTemplates, Topology topology) {
         // Get the scaling of parent if not exist
-        Capability scalableCapability = TopologyUtils.getScalableCapability(nodeTemplates, id, false);
+        Capability scalableCapability = TopologyUtils.getScalableCapability(topology, nodeTemplateId, false);
         if (scalableCapability == null) {
-            if (nodeTemplates.get(id).getRelationships() != null) {
-                for (RelationshipTemplate rel : nodeTemplates.get(id).getRelationships().values()) {
-                    IndexedRelationshipType relType = getRelationshipType(rel.getType());
-                    if (ToscaUtils.isFromType(NormativeRelationshipConstants.HOSTED_ON, relType)) {
-                        return getScalingPolicy(rel.getTarget(), nodeTemplates);
+            if (nodeTemplates.get(nodeTemplateId).getRelationships() != null) {
+                for (RelationshipTemplate rel : nodeTemplates.get(nodeTemplateId).getRelationships().values()) {
+                    RelationshipType relType = getRelationshipType(rel.getType());
+                    if (ToscaTypeUtils.isOfType(relType, NormativeRelationshipConstants.HOSTED_ON)) {
+                        return getScalingPolicy(rel.getTarget(), nodeTemplates, topology);
                     }
                 }
             } else {
@@ -130,7 +164,7 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
         for (Map.Entry<String, NodeTemplate> nodeTemplateEntry : nodeTemplates.entrySet()) {
             Map<String, InstanceInformation> instanceInformations = Maps.newHashMap();
             currentInformations.put(nodeTemplateEntry.getKey(), instanceInformations);
-            ScalingPolicy policy = getScalingPolicy(nodeTemplateEntry.getKey(), nodeTemplates);
+            ScalingPolicy policy = getScalingPolicy(nodeTemplateEntry.getKey(), nodeTemplates, topology);
             int initialInstances = policy != null ? policy.getInitialInstances() : 1;
             for (int i = 1; i <= initialInstances; i++) {
                 InstanceInformation newInstanceInformation = newInstance(i);
@@ -195,6 +229,16 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
         DeploymentStatus oldDeploymentStatus = runtimeDeploymentInfo.getStatus();
         log.info("Deployment [" + deploymentPaaSId + "] moved from status [" + oldDeploymentStatus + "] to [" + status + "]");
         runtimeDeploymentInfo.setStatus(status);
+        PaaSDeploymentLog deploymentLog = new PaaSDeploymentLog();
+        deploymentLog.setDeploymentId(paaSDeploymentIdToAlienDeploymentIdMap.get(deploymentPaaSId));
+        deploymentLog.setContent("Change deployment status to " + status);
+        deploymentLog.setDeploymentPaaSId(deploymentPaaSId);
+        deploymentLog.setLevel(PaaSDeploymentLogLevel.INFO);
+        deploymentLog.setTimestamp(new Date());
+        deploymentLog.setType("deployment_status_change");
+        deploymentLog.setWorkflowId("install");
+        alienMonitorDao.getClient().admin().indices().prepareRefresh(PaaSDeploymentLog.class.getSimpleName().toLowerCase()).execute().actionGet();
+        deploymentLoggingService.save(deploymentLog);
         executorService.schedule(new Runnable() {
             @Override
             public void run() {
@@ -210,7 +254,6 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
                 toBeDeliveredEvents.add(messageMonitorEvent);
             }
         }, 2, TimeUnit.SECONDS);
-
         return oldDeploymentStatus;
     }
 
@@ -242,7 +285,8 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
 
                 if (deployment.getSourceName().equals(BLOCKSTORAGE_APPLICATION) && cloned.getState().equalsIgnoreCase("created")) {
                     PaaSInstancePersistentResourceMonitorEvent prme = new PaaSInstancePersistentResourceMonitorEvent(nodeId, instanceId.toString(),
-                            NormativeBlockStorageConstants.VOLUME_ID, UUID.randomUUID().toString());
+                            MapUtil.newHashMap(new String[] { NormativeBlockStorageConstants.VOLUME_ID }, new Object[] { UUID.randomUUID().toString() }));
+                    prme.setDeploymentId(deployment.getId());
                     toBeDeliveredEvents.add(prme);
                 }
 
@@ -300,6 +344,20 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
             } else {
                 notifyInstanceStateChanged(id, nodeId, instanceId, information, 2);
             }
+            PaaSDeploymentLog deploymentLog = new PaaSDeploymentLog();
+            deploymentLog.setContent("Change state to " + nextState);
+            deploymentLog.setDeploymentId(paaSDeploymentIdToAlienDeploymentIdMap.get(id));
+            deploymentLog.setDeploymentPaaSId(id);
+            deploymentLog.setInstanceId(instanceId);
+            deploymentLog.setNodeId(nodeId);
+            deploymentLog.setInterfaceName("Standard");
+            deploymentLog.setOperationName("changeState");
+            deploymentLog.setLevel(PaaSDeploymentLogLevel.INFO);
+            deploymentLog.setTimestamp(new Date());
+            deploymentLog.setType("state_change");
+            deploymentLog.setWorkflowId("install");
+            alienMonitorDao.save(deploymentLog);
+            alienMonitorDao.getClient().admin().indices().prepareRefresh(PaaSDeploymentLog.class.getSimpleName().toLowerCase()).execute().actionGet();
         }
     }
 
@@ -337,10 +395,8 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
         void visit(String nodeTemplateId);
     }
 
-    private IndexedRelationshipType getRelationshipType(String typeName) {
-        Map<String, String[]> filters = Maps.newHashMap();
-        filters.put("elementId", new String[] { typeName });
-        return (IndexedRelationshipType) csarRepoSearchService.search(IndexedRelationshipType.class, null, 0, 1, filters, false).getData()[0];
+    private RelationshipType getRelationshipType(String typeName) {
+        return toscaTypeSearchService.findMostRecent(RelationshipType.class, typeName);
     }
 
     private void doScaledUpNode(ScalingVisitor scalingVisitor, String nodeTemplateId, Map<String, NodeTemplate> nodeTemplates) {
@@ -348,8 +404,8 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
         for (Entry<String, NodeTemplate> nEntry : nodeTemplates.entrySet()) {
             if (nEntry.getValue().getRelationships() != null) {
                 for (Entry<String, RelationshipTemplate> rt : nEntry.getValue().getRelationships().entrySet()) {
-                    IndexedRelationshipType relType = getRelationshipType(rt.getValue().getType());
-                    if (nodeTemplateId.equals(rt.getValue().getTarget()) && ToscaUtils.isFromType(NormativeRelationshipConstants.HOSTED_ON, relType)) {
+                    RelationshipType relType = getRelationshipType(rt.getValue().getType());
+                    if (nodeTemplateId.equals(rt.getValue().getTarget()) && ToscaTypeUtils.isOfType(relType, NormativeRelationshipConstants.HOSTED_ON)) {
                         doScaledUpNode(scalingVisitor, nEntry.getKey(), nodeTemplates);
                     }
                 }
@@ -358,7 +414,7 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
     }
 
     @Override
-    public void init(Map<String, PaaSTopologyDeploymentContext> activeDeployments) {
+    public void init(Map<String, String> activeDeployments) {
 
     }
 
@@ -400,7 +456,7 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
 
     @Override
     public void launchWorkflow(PaaSDeploymentContext deploymentContext, final String workflowName, Map<String, Object> inputs,
-            final IPaaSCallback<?> callback) {
+            final IPaaSCallback<String> callback) {
         log.info(String.format("Execution of workflow %s is scheduled", workflowName));
         executorService.schedule(new Runnable() {
             @Override
@@ -453,7 +509,7 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
     }
 
     @Override
-    public void setConfiguration(ProviderConfig configuration) throws PluginConfigurationException {
+    public void setConfiguration(String orchestratorId, ProviderConfig configuration) throws PluginConfigurationException {
         log.info("In the plugin configurator <" + this.getClass().getName() + ">");
         try {
             log.info("The config object Tags is : {}", JsonUtil.toString(configuration.getTags()));
@@ -485,9 +541,8 @@ public abstract class MockPaaSProvider extends AbstractPaaSProvider {
             Map<String, InstanceInformation> nodeInstances = nodeEntry.getValue();
             if (nodeInstances != null && !nodeInstances.isEmpty()) {
                 NodeTemplate nodeTemplate = topology.getNodeTemplates().get(nodeTemplateId);
-                IndexedNodeType nodeType = csarRepoSearchService.getRequiredElementInDependencies(IndexedNodeType.class, nodeTemplate.getType(),
-                        topology.getDependencies());
-                if (ToscaUtils.isFromType(NormativeComputeConstants.COMPUTE_TYPE, nodeType)) {
+                NodeType nodeType = toscaTypeSearchService.getRequiredElementInDependencies(NodeType.class, nodeTemplate.getType(), topology.getDependencies());
+                if (ToscaTypeUtils.isOfType(nodeType, NormativeComputeConstants.COMPUTE_TYPE)) {
                     for (Entry<String, InstanceInformation> nodeInstanceEntry : nodeInstances.entrySet()) {
                         String instanceId = nodeInstanceEntry.getKey();
                         InstanceInformation instanceInformation = nodeInstanceEntry.getValue();

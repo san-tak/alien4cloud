@@ -4,6 +4,7 @@ define(function (require) {
 
   var modules = require('modules');
   var _ = require('lodash');
+  var d3Tip = require('d3-tip');
 
   modules.get('a4c-topology-editor').factory('connectorDragFactoryService', [ 'relationshipMatchingService',
     function(relationshipMatchingService) {
@@ -11,9 +12,15 @@ define(function (require) {
         create: function(topologySvg) {
           var selectedTarget;
           var mouseCoordinate;
+          var tip = d3Tip().attr('class', 'd3-tip').html(function (node) {
+            return node.target.id;
+          });
 
           var connectorDrag = d3.behavior.drag()
             .on('dragstart', function(element) {
+              // reinit the target selection
+              selectedTarget = null;
+              // find relationship valid targets
               relationshipMatchingService.getTargets(element.node.id, element.template, element.id, topologySvg.topology.topology.nodeTemplates,
                 topologySvg.topology.nodeTypes, topologySvg.topology.relationshipTypes, topologySvg.topology.capabilityTypes, topologySvg.topology.topology.dependencies).then(function(result) {
                 var connectTargets = [];
@@ -33,15 +40,17 @@ define(function (require) {
                   });
                 });
 
+
                 var targetSelection = topologySvg.svg.selectAll('.connectorTarget').data(connectTargets);
-                targetSelection.enter().append('circle')
+                var vis = targetSelection.enter().append('circle')
                   .attr('cx', function(d){ return d.target.coordinate.x; })
                   .attr('cy', function(d){ return d.target.coordinate.y; })
                   .attr('r', 10)
                   .attr('class', 'connectorTarget')
                   .attr('pointer-events', 'mouseover')
-                  .on('mouseover', function(node) { selectedTarget = node; })
-                  .on('mouseout', function() { selectedTarget = null; });
+                  .on('mouseover', function(node) { selectedTarget = node; tip.show(node);})
+                  .on('mouseout', function() { selectedTarget = null; tip.hide(); });
+                vis.call(tip);
                 targetSelection.exit().remove();
               });
               mouseCoordinate = {
@@ -49,7 +58,6 @@ define(function (require) {
                 y: element.coordinate.y
               };
 
-              // find relationship valid targets
               d3.event.sourceEvent.stopPropagation();
             }).on('drag', function(element) {
               var data = [];
@@ -65,24 +73,24 @@ define(function (require) {
               var link = topologySvg.svg.selectAll('.connectorlink').data(data);
               link.enter().append('path')
                   .attr('class', 'connectorlink')
-                  .attr('d', d3.svg.diagonal())
                   .attr('pointer-events', 'none');
-              link.attr('d', d3.svg.diagonal());
+              link.attr('d', d3.svg.diagonal()); // this compute the path
               link.exit().remove();
             }).on('dragend', function(element) {
               // remove all drag line and drag targets
               topologySvg.svg.selectAll('.connectorTarget').data([]).exit().remove();
               topologySvg.svg.selectAll('.connectorlink').data([]).exit().remove();
+              tip.hide();
+
               if(_.defined(selectedTarget)) {
                 var target = selectedTarget.target;
-                topologySvg.addRelationship({
-                  sourceId: element.node.id,
-                  requirementName: element.id,
-                  requirementType: element.template.type,
-                  targetId: target.node.id,
-                  capabilityName: target.id,
-                  relationship: selectedTarget.relationship
-                });
+                topologySvg.callbacks.addRelationship(
+                  element.node.id,
+                  element.id,
+                  element.template.type,
+                  target.node.id,
+                  target.id,
+                  selectedTarget.relationship);
               }
             });
 

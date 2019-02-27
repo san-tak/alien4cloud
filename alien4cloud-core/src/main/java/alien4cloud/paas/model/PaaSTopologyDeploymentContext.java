@@ -1,14 +1,11 @@
 package alien4cloud.paas.model;
 
-import java.util.Map;
-
+import alien4cloud.model.orchestrators.locations.Location;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
 
-import org.elasticsearch.annotation.ESObject;
-
-import alien4cloud.model.orchestrators.locations.Location;
+import java.util.Map;
 
 /**
  * The context of the deployment
@@ -17,14 +14,9 @@ import alien4cloud.model.orchestrators.locations.Location;
 @Setter
 @ToString(callSuper = true)
 public class PaaSTopologyDeploymentContext extends PaaSDeploymentContext {
-
-    /**
-     * The parsed PaaS topology
-     */
+    /** The parsed PaaS topology */
     private PaaSTopology paaSTopology;
 
-    /**
-     * Locations map id of the location --> the location it-self
-     */
+    /** Locations map id of the location --> the location it-self */
     private Map<String, Location> locations;
 }

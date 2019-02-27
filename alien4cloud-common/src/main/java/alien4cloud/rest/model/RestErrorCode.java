@@ -4,6 +4,9 @@ package alien4cloud.rest.model;
  * Error codes for rest services.
  */
 public enum RestErrorCode {
+    // Maintenance
+    MAINTENANCE(0),
+
     // Authentication
     AUTHENTICATION_REQUIRED_ERROR(100),
     AUTHENTICATION_FAILED_ERROR(101),
@@ -14,9 +17,6 @@ public enum RestErrorCode {
     CSAR_INVALID_ERROR(201),
     CSAR_RELEASE_IMMUTABLE(202),
 
-    // Git csar import errors
-    GIT_IMPORT_FAILED(615),
-
     // Indexing global error.
     INDEXING_SERVICE_ERROR(300),
 
@@ -25,6 +25,7 @@ public enum RestErrorCode {
     MISSING_PLUGIN_ERROR(351),
     INVALID_PLUGIN_CONFIGURATION(352),
     MISSING_PLUGIN_DESCRIPTOR_FILE_EXCEPTION(353),
+    ENABLE_PLUGIN_ERROR(354),
 
     // Cloud errors
     CLOUD_DISABLED_ERROR(370),
@@ -33,6 +34,7 @@ public enum RestErrorCode {
     MAINTENANCE_MODE_ERROR(373),
     EMPTY_META_PROPERTY_ERROR(374),
     SCALING_ERROR(375),
+    ORCHESTRATOR_LOCATION_SUPPORT_VIOLATION(376),
 
     // User errors
     DELETE_LAST_ADMIN_USER_ERROR(390),
@@ -51,6 +53,7 @@ public enum RestErrorCode {
     INTERNAL_OBJECT_ERROR(506),
     DELETE_REFERENCED_OBJECT_ERROR(507),
     RESOURCE_USED_ERROR(508),
+    UNSUPPORTED_OPERATION_ERROR(509),
 
     // Application handling errors : code 600+
     APPLICATION_UNDEPLOYMENT_ERROR(602),
@@ -67,15 +70,25 @@ public enum RestErrorCode {
     CANNOT_UPDATE_DEPLOYED_ENVIRONMENT(612),
     DEPLOYMENT_PAAS_ID_CONFLICT(613),
     INVALID_DEPLOYMENT_TOPOLOGY(614),
-    INVALID_NODE_NAME(618),
+    APPLICATION_CSAR_VERSION_ALREADY_EXIST(615),
+    INVALID_NAME(618),
+    RUNTIME_WORKFLOW_ERROR(619),
 
     // PaaS errors : code 650+
     COMPUTE_CONFLICT_NAME(650),
     CONFLICT_BETWEEN_DELETABLE_OPTION_AND_VOLUME_ID(651),
 
+    // Git csar import errors: code 680+
+    GIT_IMPORT_FAILED(680),
+    GIT_CONFLICT_ERROR(681),
+    GIT_STATE_ERROR(682),
+
     // Component handling errors : code 700+
     COMPONENT_MISSING_ERROR(700),
-    COMPONENT_INTERNALTAG_ERROR(701),
+
+    // Editor errors
+    EDITOR_CONCURRENCY_ERROR(750),
+    EDITOR_IO_ERROR(751),
 
     // Topology management errors.
     // Node template properties handling errors
@@ -92,11 +105,14 @@ public enum RestErrorCode {
     UPPER_BOUND_REACHED(810),
     LOWER_BOUND_NOT_SATISFIED(811),
     PROPERTY_DEFINITION_MATCH_ERROR(812),
+    INVALID_SECRET_CREDENTIALS_EXCEPTION(813),
     //
     CYCLIC_TOPOLOGY_TEMPLATE_REFERENCE_ERROR(820),
     RELEASE_REFERENCING_SNAPSHOT(830),
     VERSION_USED(831),
-    BAD_WORKFLOW_OPERATION(850);
+    BAD_WORKFLOW_OPERATION(850),
+    RECOVER_TOPOLOGY(860),
+    NOT_VISIBLE_TOPOLOGY(870);
 
     private final int code;
 

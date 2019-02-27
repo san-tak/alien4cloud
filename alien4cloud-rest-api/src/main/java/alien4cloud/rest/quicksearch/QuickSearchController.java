@@ -5,6 +5,8 @@ import java.util.Set;
 
 import javax.annotation.Resource;
 
+import io.swagger.annotations.Api;
+import org.alien4cloud.tosca.model.types.RelationshipType;
 import org.apache.commons.lang3.ArrayUtils;
 import org.elasticsearch.index.query.FilterBuilder;
 import org.springframework.http.MediaType;
@@ -19,7 +21,7 @@ import alien4cloud.dao.IGenericSearchDAO;
 import alien4cloud.dao.model.FetchContext;
 import alien4cloud.dao.model.GetMultipleDataResult;
 import alien4cloud.model.application.Application;
-import alien4cloud.model.components.IndexedNodeType;
+import org.alien4cloud.tosca.model.types.NodeType;
 import alien4cloud.rest.model.BasicSearchRequest;
 import alien4cloud.rest.model.RestResponse;
 import alien4cloud.rest.model.RestResponseBuilder;
@@ -36,6 +38,7 @@ import io.swagger.annotations.ApiOperation;
  */
 @RestController
 @RequestMapping({"/rest/quicksearch", "/rest/v1/quicksearch", "/rest/latest/quicksearch"})
+@Api
 public class QuickSearchController {
     @Resource(name = "alien-es-dao")
     private IGenericSearchDAO alienDAO;
@@ -51,7 +54,7 @@ public class QuickSearchController {
         // First phase : COMPONENTS search, needed role Role.COMPONENTS_BROWSER or Role.ADMIN
         if (AuthorizationUtil.hasOneRoleIn(Role.COMPONENTS_BROWSER)) {
             authoIndexes.add(ElasticSearchDAO.TOSCA_ELEMENT_INDEX);
-            classes.add(IndexedNodeType.class);
+            classes.add(NodeType.class);
         }
 
         GetMultipleDataResult searchResultComponents = searchByType(requestObject, authoIndexes, classes, null, null);
@@ -74,6 +77,23 @@ public class QuickSearchController {
         searchResult.setTypes(ArrayUtils.addAll(searchResultComponents.getTypes(), searchResultApplications.getTypes()));
         searchResult.setData(ArrayUtils.addAll(searchResultComponents.getData(), searchResultApplications.getData()));
         searchResult.setTotalResults(searchResultComponents.getTotalResults() + searchResultApplications.getTotalResults());
+
+        return RestResponseBuilder.<GetMultipleDataResult> builder().data(searchResult).build();
+    }
+
+    @ApiOperation(value = "Search for relationship types in ALIEN's repository.")
+    @RequestMapping(value = "relationship_types", method = RequestMethod.POST, consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("isAuthenticated()")
+    public RestResponse<GetMultipleDataResult> searchRelationshipTypes(@RequestBody BasicSearchRequest requestObject) {
+        AuthorizationUtil.checkHasOneRoleIn(Role.COMPONENTS_BROWSER);
+
+        Set<String> authoIndexes = Sets.newHashSet();
+        Set<Class<?>> classes = Sets.newHashSet();
+
+        authoIndexes.add(ElasticSearchDAO.TOSCA_ELEMENT_INDEX);
+        classes.add(RelationshipType.class);
+
+        GetMultipleDataResult searchResult = searchByType(requestObject, authoIndexes, classes, null, null);
 
         return RestResponseBuilder.<GetMultipleDataResult> builder().data(searchResult).build();
     }

@@ -2,8 +2,9 @@ define(function(require) {
   'use strict';
 
   var modules = require('modules');
-  var angular = require('angular');
   var _ = require('lodash');
+  var d3 = require('d3');
+  const COMPONENT_VERSION = 'component_version';
 
   require('scripts/tosca/services/tosca_service');
   require('scripts/topology/services/common_node_renderer_service');
@@ -100,24 +101,23 @@ define(function(require) {
             var runtimeGroup = nodeGroup.append('g').attr('id', 'runtime');
             d3Service.rect(runtimeGroup, node.bbox.width() - 10, 0, 10, this.height, 0, 0).attr('id', 'runtimeState').attr('class', 'runtime-state-no');
           }
-          if (nodeType.tags) {
-            var tags = listToMapService.listToMap(nodeType.tags, 'name', 'value');
-            if (tags.icon) {
-              nodeGroup.append('image').attr('x', 8).attr('y', 8).attr('width', '32').attr('height', '32').attr('xlink:href',
-                'img?id=' + tags.icon + '&quality=QUALITY_64');
-            }
-          }
-          if (nodeType.abstract) {
-            nodeGroup.append('image').attr('x', 44).attr('y', 26).attr('width', 16).attr('height', 16).attr('xlink:href', 'images/abstract_ico.png');
-          }
+          nodeGroup.append('image').attr('id', 'icon').attr('x', 8).attr('y', 8).attr('width', '32').attr('height', '32').attr('xlink:href', 'images/blank.png');
+          nodeGroup.append('image').attr('id', 'abstract').attr('x', 44).attr('y', 26).attr('width', 16).attr('height', 16).attr('xlink:href', 'images/blank.png');
 
           nodeGroup.append('text').attr('id', 'title_' + node.id).attr('text-anchor', 'start').attr('class', 'title').attr('x', 44).attr('y', 20);
           nodeGroup.append('text').attr('text-anchor', 'end').attr('class', 'version').attr('x', node.bbox.width() - 10).attr('y', 40);
 
-          // if the node has some children we should add the collapse bar.
-          // if(_.defined(node.children) && node.children.length>0) {
-          //   d3Service.rect(nodeGroup, .5, 45, node.bbox.width()-1, 10, 0, 0).attr('class', 'collapsebar');
-          // }
+          // TODO manage node collapse management.
+          // Scalable capability management
+          if (!this.isRuntime && _.defined(nodeTemplate, 'capabilitiesMap.scalable')) {
+            var scalableSelection = nodeGroup.append('g').attr('id', 'scalable_' + node.id);
+            var scaleX = 70;
+            scalableSelection.append('text').attr('class', 'topology-svg-icon topology-svg-icon-center')
+              .attr('transform', 'rotate(90 ' + (scaleX) + ' 35)')
+              .attr('x', scaleX).attr('y', 35).text('\uf112');
+            scalableSelection.append('text').attr('id', 'scaling-text').attr('text-anchor', 'start')
+              .attr('x', scaleX + 10).attr('y', 40).text('1 - 1 - 1');
+          }
 
           // specific to networks
           if (toscaService.isOneOfType(['tosca.nodes.Network'], nodeTemplate.type, topology.nodeTypes)) {
@@ -130,6 +130,7 @@ define(function(require) {
           }
           d3Service.rect(nodeGroup, 0, 0, node.bbox.width(), node.bbox.height(), 0, 0).attr('class', 'selector').attr('node-template-id', node.id)
             .attr('id', 'rect_' + node.id).on('click', actions.click).on('mouseover', actions.mouseover).on('mouseout', actions.mouseout);
+          nodeGroup.call(actions.nodeDrag);
 
           this.requirementRenderer.actions = actions;
           this.capabilityRenderer.actions = actions;
@@ -145,13 +146,30 @@ define(function(require) {
 
           // update version
           nodeGroup.select('.version').text(function() {
-            if (_.defined(nodeTemplate.propertiesMap) &&
-                _.defined(nodeTemplate.propertiesMap.version) &&
-                _.defined(nodeTemplate.propertiesMap.version.value) &&
-                _.defined(nodeTemplate.propertiesMap.version.value.value)) {
+            if (_.defined(nodeTemplate, 'propertiesMap.component_version.value.value')) {
+              return 'v' + nodeTemplate.propertiesMap[COMPONENT_VERSION].value.value;
+            } else if(_.defined(nodeTemplate, 'propertiesMap.version.value.value')) {
               return 'v' + nodeTemplate.propertiesMap.version.value.value;
             }
           });
+          // node icon
+          if (nodeType.tags) {
+            var tags = listToMapService.listToMap(nodeType.tags, 'name', 'value');
+            if (tags.icon) {
+              nodeGroup.select('#icon').attr('xlink:href','img?id=' + tags.icon + '&quality=QUALITY_64');
+            } else {
+              nodeGroup.select('#icon').attr('xlink:href','images/blank.png');
+            }
+            nodeGroup.select('.title').classed('text-deprecated', function() { return tags.deprecated === 'true'; });
+          } else {
+            nodeGroup.select('#icon').attr('xlink:href','images/blank.png');
+          }
+          // abstract icon
+          if (nodeType.abstract) {
+            nodeGroup.select('#abstract').attr('xlink:href', 'images/abstract_ico.png');
+          } else {
+            nodeGroup.select('#abstract').attr('xlink:href', 'images/blank.png');
+          }
 
           if (_.defined(nodeTemplate.groups)) {
             var gIdx = 1;
@@ -167,7 +185,7 @@ define(function(require) {
             var gY = node.bbox.height() - 5;
             // the end of the node square
             var nodeEndX = node.bbox.width() - (gW / 2);
-            angular.forEach(nodeTemplate.groups, function(value) {
+            _.each(nodeTemplate.groups, function(value) {
               // let's place the group square regarding it's index and applying a 0.2 margin
               var gX = nodeEndX - (gIdx * 1.2 * gW);
 
@@ -176,6 +194,29 @@ define(function(require) {
               rect.attr('title', value);
               gIdx++;
             });
+          }
+          if(_.defined(nodeTemplate.policies)) {
+            // If there is policies defined for this node let's display icon(s)
+            var policySelection = nodeGroup.selectAll('.policy-template').data(nodeTemplate.policies, function(policyTemplate) { return policyTemplate.name; });
+            var newPolicySelection = policySelection.enter().append('g').attr('class', 'policy-template').attr('id', function(policyTemplate) { return 'a4c_svgp_' + policyTemplate.name; });
+            newPolicySelection.each(function(policyTemplate) {
+              var policyTemplateGroup = d3.select(this);
+              var index = _.findIndex(nodeTemplate.policies, 'name', policyTemplate.name);
+              var policyX = node.bbox.width() - 12 - 18 * ( index );
+              // append policy circle
+              d3Service.circle(policyTemplateGroup, policyX, 0, 8).attr('class', 'connector');
+              var svgChar = toscaService.getTag('a4c_svg_char', topology.policyTypes[policyTemplate.type].tags);
+              if(_.defined(svgChar)) {
+                var rotate = toscaService.getTag('a4c_svg_rotate', topology.policyTypes[policyTemplate.type].tags);
+                // append policy icon
+                var policyIconBuilder = policyTemplateGroup.append('text').attr('class', 'topology-svg-icon topology-svg-icon-center');
+                if(_.defined(rotate)) {
+                  policyIconBuilder.attr('transform', 'rotate(' + rotate + ' ' + policyX + ' 0)');
+                }
+                policyIconBuilder.attr('x', policyX).attr('y', 0).text(String.fromCharCode(parseInt(svgChar, 16)));
+              }
+            });
+            policySelection.exit().remove();
           }
 
           // runtime infos
@@ -196,33 +237,25 @@ define(function(require) {
               this.drawRuntimeInfos(node, runtimeGroup, nodeInstances, nodeInstancesCount, 0, 0);
             }
           } else { // scaling policy
-            var scalingPolicy = toscaService.getScalingPolicy(nodeTemplate);
-            var scalingPolicySelection = nodeGroup.select('#scalingPolicy');
-            if (_.defined(scalingPolicy)) {
+            var scalableCapability = toscaService.getScalingPolicy(nodeTemplate, topology.capabilityTypes);
+            if(_.undefined(scalableCapability)) {
+              scalableCapability = toscaService.getClusterControllerPolicy(nodeTemplate, topology.capabilityTypes);
+            }
+            var scalableSelection = nodeGroup.select('#scalable_' + node.id);
+            if (_.defined(scalableCapability)) {
+              scalableSelection.classed('hidden', function(){ return false; });
               var formatScalingValue = function(scalingValue) {
-                if (scalingValue.hasOwnProperty('function')) {
+                if (scalingValue.hasOwnProperty('function')) { // input
                   return '...';
                 } else {
                   return scalingValue;
                 }
               };
-              var scalingText = formatScalingValue(scalingPolicy.minInstances) + ' - ' + formatScalingValue(scalingPolicy.initialInstances) + ' - ' + formatScalingValue(scalingPolicy.maxInstances);
-              if (scalingPolicySelection.empty()) {
-                var scaleX = 50;
-                if (nodeType.abstract) {
-                  scaleX += 20;
-                }
-                scalingPolicySelection = nodeGroup.append('g').attr('id', 'scalingPolicy');
-                scalingPolicySelection.append('text').attr('class', 'topology-svg-icon topology-svg-icon-center')
-                  .attr('transform', 'rotate(90 ' + (scaleX) + ' 35)')
-                  .attr('x', scaleX).attr('y', 35).text('\uf112');
-                scalingPolicySelection.append('text').attr('id', 'scaling-text').attr('text-anchor', 'start')
-                  .attr('x', scaleX + 10).attr('y', 40).text(scalingText);
-              } else {
-                scalingPolicySelection.select('#scaling-text').text(scalingText);
-              }
-            } else if (!scalingPolicySelection.empty()) {
-              scalingPolicySelection.remove();
+              var scalingText = formatScalingValue(scalableCapability.minInstances) + ' - ' + formatScalingValue(scalableCapability.initialInstances) + ' - ' + formatScalingValue(scalableCapability.maxInstances);
+              scalableSelection.select('#scaling-text').text(scalingText);
+            } else {
+              // The scaling poilcy is just 1 - 1 - 1 don't display to the user
+              scalableSelection.classed('hidden', function(){ return true; });
             }
           }
 
@@ -245,7 +278,7 @@ define(function(require) {
             var failureCount = this.getNumberOfInstanceByStatus(nodeInstances, 'FAILURE');
             deletedCount = this.getNumberOfInstanceByStatus(nodeInstances, null, 'stopped');
 
-            var runtimeStateIndicatorWidth = node.bbox.width() - 48 - 40;
+            var runtimeStateIndicatorWidth = node.bbox.width() - 48 - 30;
             var indicatorWidth;
             if (successCount > 0) {
               indicatorWidth = runtimeStateIndicatorWidth * successCount / nodeInstancesCount;
@@ -305,16 +338,6 @@ define(function(require) {
           } else {
             groupSelection.attr('width', width);
           }
-          // var groupSelection = runtimeGroup.select('#' + id);
-          // // improve that...
-          // var counter = (count || '?') + '/' + (instanceCount || '?');
-          // if (groupSelection.empty()) {
-          //   groupSelection = runtimeGroup.append('g').attr('id', id);
-          //   groupSelection.append('text').attr('class', 'topology-svg-icon').attr('text-anchor', 'start').attr('x', rectOriginX + 60).attr('y', currentY).text(iconCode);
-          //   groupSelection.append('text').attr('id', 'count-text').attr('text-anchor', 'start').attr('x', rectOriginX + 80).attr('y', currentY).text(counter);
-          // } else {
-          //   groupSelection.select('#count-text').text(counter);
-          // }
         },
 
         // common services

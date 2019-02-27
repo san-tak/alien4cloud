@@ -1,12 +1,20 @@
 package alien4cloud.json.deserializer;
 
-import alien4cloud.model.components.AbstractPropertyValue;
-import alien4cloud.model.components.ComplexPropertyValue;
-import alien4cloud.model.components.FunctionPropertyValue;
-import alien4cloud.model.components.ListPropertyValue;
-import alien4cloud.model.components.ScalarPropertyValue;
+import java.lang.reflect.InvocationTargetException;
 
+import org.alien4cloud.tosca.model.definitions.AbstractPropertyValue;
+import org.alien4cloud.tosca.model.definitions.ComplexPropertyValue;
+import org.alien4cloud.tosca.model.definitions.ConcatPropertyValue;
+import org.alien4cloud.tosca.model.definitions.FunctionPropertyValue;
+import org.alien4cloud.tosca.model.definitions.ListPropertyValue;
+import org.alien4cloud.tosca.model.definitions.ScalarPropertyValue;
+
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.node.JsonNodeType;
+
+import alien4cloud.rest.utils.RestMapper;
+import alien4cloud.utils.jackson.ConditionalAttributes;
 
 /**
  * Custom deserializer to handle multiple IOperationParameter types.
@@ -14,10 +22,29 @@ import com.fasterxml.jackson.databind.node.JsonNodeType;
 public class PropertyValueDeserializer extends AbstractDiscriminatorPolymorphicDeserializer<AbstractPropertyValue> {
     public PropertyValueDeserializer() {
         super(AbstractPropertyValue.class);
+        addToRegistry("function_concat", ConcatPropertyValue.class);
         addToRegistry("function", FunctionPropertyValue.class);
+        // let's handle null with a scalar deserializer.
+        addToRegistry("value", JsonNodeType.NULL.toString(), ScalarPropertyValue.class);
         addToRegistry("value", JsonNodeType.STRING.toString(), ScalarPropertyValue.class);
         addToRegistry("value", JsonNodeType.ARRAY.toString(), ListPropertyValue.class);
         addToRegistry("value", JsonNodeType.OBJECT.toString(), ComplexPropertyValue.class);
         setValueStringClass(ScalarPropertyValue.class);
+    }
+
+    @Override
+    public AbstractPropertyValue getNullValue(DeserializationContext ctxt) throws JsonMappingException {
+        if (ctxt.getAttribute(ConditionalAttributes.REST) != null && RestMapper.PATCH.equals(RestMapper.REQUEST_OPERATION.get())) {
+            try {
+                AbstractPropertyValue instance = (AbstractPropertyValue) RestMapper.NULL_INSTANCES.get(ScalarPropertyValue.class);
+                if (instance == null) {
+                    instance = ScalarPropertyValue.class.getConstructor().newInstance();
+                }
+                RestMapper.NULL_INSTANCES.put(ScalarPropertyValue.class, instance);
+                return instance;
+            } catch (IllegalAccessException | InstantiationException | NoSuchMethodException | InvocationTargetException e) {
+            }
+        }
+        return super.getNullValue(ctxt);
     }
 }

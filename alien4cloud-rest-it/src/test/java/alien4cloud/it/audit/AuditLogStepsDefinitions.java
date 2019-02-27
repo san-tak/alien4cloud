@@ -1,22 +1,23 @@
 package alien4cloud.it.audit;
 
 import java.io.IOException;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.http.NameValuePair;
 import org.apache.http.message.BasicNameValuePair;
 import org.junit.Assert;
 
-import alien4cloud.audit.model.AuditTrace;
-import alien4cloud.audit.model.AuditedMethod;
-import alien4cloud.dao.model.FacetedSearchResult;
-import alien4cloud.it.Context;
-import alien4cloud.audit.rest.AuditConfigurationDTO;
-import alien4cloud.rest.component.SearchRequest;
-import alien4cloud.rest.utils.JsonUtil;
-
 import com.google.common.collect.Lists;
 
+import alien4cloud.audit.model.AuditTrace;
+import alien4cloud.audit.model.AuditedMethod;
+import alien4cloud.audit.rest.AuditConfigurationDTO;
+import alien4cloud.dao.model.FacetedSearchResult;
+import alien4cloud.it.Context;
+import alien4cloud.rest.model.FilteredSearchRequest;
+import alien4cloud.rest.utils.JsonUtil;
 import cucumber.api.DataTable;
 import cucumber.api.java.en.And;
 import cucumber.api.java.en.Then;
@@ -28,7 +29,7 @@ public class AuditLogStepsDefinitions {
 
     @Then("^I should have no audit trace in Alien$")
     public void I_should_have_no_audit_trace_in_Alien() throws Throwable {
-        SearchRequest req = new SearchRequest(null, "", 0, 1, null);
+        FilteredSearchRequest req = new FilteredSearchRequest("", 0, 1, null);
         String jSon = JsonUtil.toString(req);
         String restResponse = Context.getRestClientInstance().postJSon("/rest/v1/audit/search", jSon);
         FacetedSearchResult searchResult = JsonUtil.read(restResponse, FacetedSearchResult.class).getData();
@@ -37,21 +38,12 @@ public class AuditLogStepsDefinitions {
 
     @Then("^I should have (\\d+) audit traces in Alien:$")
     public void I_should_have_audit_traces_in_Alien(int numberOfResult, DataTable rawExpectedAuditTraces) throws Throwable {
-        SearchRequest req = new SearchRequest(null, "", 0, numberOfResult, null);
-        String jSon = JsonUtil.toString(req);
-        String restResponse = Context.getRestClientInstance().postJSon("/rest/v1/audit/search", jSon);
-        FacetedSearchResult searchResult = JsonUtil.read(restResponse, FacetedSearchResult.class).getData();
-        Assert.assertTrue(searchResult.getTotalResults() == numberOfResult);
-        Object[] searchData = searchResult.getData();
-        List<AuditTrace> actualTraces = Lists.newArrayList();
-        for (int i = 0; i < searchData.length; i++) {
-            actualTraces.add(JsonUtil.readObject(JsonUtil.toString(searchData[i]), AuditTrace.class));
-        }
+        List<AuditTrace> auditTraces = searchAuditLogs("", 0, numberOfResult, null, true);
         for (List<String> row : rawExpectedAuditTraces.raw()) {
             String userName = row.get(0);
             String category = row.get(1);
             String action = row.get(2);
-            Assert.assertTrue(auditContains(actualTraces, userName, category, action));
+            Assert.assertTrue(auditContains(auditTraces, userName, category, action));
         }
     }
 
@@ -163,5 +155,33 @@ public class AuditLogStepsDefinitions {
         AuditConfigurationDTO configuration = JsonUtil.read(restResponse, AuditConfigurationDTO.class).getData();
         Assert.assertNotNull(configuration);
         currentAuditConfiguration = configuration;
+    }
+
+    private List<AuditTrace> searchAuditLogs(String query, Integer from, int numberOfResult, Map<String, String[]> filters, boolean checkResultSize)
+            throws IOException {
+        FilteredSearchRequest req = new FilteredSearchRequest(query, from, 10, filters);
+        String jSon = JsonUtil.toString(req);
+        String restResponse = Context.getRestClientInstance().postJSon("/rest/v1/audit/search", jSon);
+        FacetedSearchResult searchResult = JsonUtil.read(restResponse, FacetedSearchResult.class).getData();
+        if (checkResultSize) {
+            Assert.assertEquals(numberOfResult, searchResult.getTotalResults());
+        }
+        Object[] searchData = searchResult.getData();
+        List<AuditTrace> actualTraces = Lists.newArrayList();
+        for (Object jsonData : searchData) {
+            actualTraces.add(JsonUtil.readObject(JsonUtil.toString(jsonData), AuditTrace.class));
+        }
+        return actualTraces;
+    }
+
+    @Then("^I should have a latest audit trace with a query defined below and whose secret \"([^\"]*)\" defined in requestBody should be hidden:$")
+    public void iShouldHaveAuditTracesInAlienAndWhoseSecretDefinedInRequestBodyShouldBeHidden(String secretFieldName, DataTable table) throws Throwable {
+        LinkedHashMap<String, String[]> queryMap = new LinkedHashMap<>();
+        table.getGherkinRows().forEach(dataTableRow -> {
+            queryMap.put(dataTableRow.getCells().get(0), new String[] { dataTableRow.getCells().get(1) });
+        });
+        List<AuditTrace> auditTraces = searchAuditLogs("", 0, 1, queryMap, false);
+        Map<String, Object> bodyMap = JsonUtil.toMap(auditTraces.get(0).getRequestBody());
+        Assert.assertEquals(true, ((String) bodyMap.get(secretFieldName)).contains("**********"));
     }
 }

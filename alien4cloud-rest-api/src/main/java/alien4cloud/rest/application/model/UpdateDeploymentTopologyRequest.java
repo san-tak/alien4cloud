@@ -15,5 +15,5 @@ public class UpdateDeploymentTopologyRequest {
 
     private Map<String, String> providerDeploymentProperties;
 
-    private Map<String, String> inputProperties;
+    private Map<String, Object> inputProperties;
 }

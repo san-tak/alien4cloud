@@ -3,11 +3,11 @@ package alien4cloud.paas.wf.validation;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.alien4cloud.tosca.model.workflow.Workflow;
 import org.elasticsearch.common.collect.Lists;
 
-import alien4cloud.paas.wf.Path;
-import alien4cloud.paas.wf.Workflow;
-import alien4cloud.paas.wf.WorkflowsBuilderService.TopologyContext;
+import alien4cloud.paas.wf.model.Path;
+import alien4cloud.paas.wf.TopologyContext;
 import alien4cloud.paas.wf.util.WorkflowGraphUtils;
 
 /**
@@ -24,12 +24,10 @@ public class CycleDetection implements Rule {
         }
         List<AbstractWorkflowError> result = Lists.newArrayList();
         // get all the paths
-        List<Path> paths = WorkflowGraphUtils.getWorkflowGraphPaths(workflow);
+        List<Path> paths = WorkflowGraphUtils.getWorkflowGraphCycles(workflow);
         for (Path path : paths) {
             // isolate cycles
-            if (path.isCycle()) {
-                result.add(new WorkflowHasCycleError(extractCycle(path.getStepNames())));
-            }
+            result.add(new WorkflowHasCycleError(extractCycle(path.getStepNames())));
         }
         return result;
     }

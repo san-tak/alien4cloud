@@ -47,6 +47,11 @@ public abstract class AbstractLocalRepository implements IFileRepository {
         }
     }
 
+    @Override
+    public long getFileLength(String id) {
+        return resolveFile(id).toFile().length();
+    }
+
     public Path resolveFile(String id) {
         return getRepositoryPath().resolve(id);
     }

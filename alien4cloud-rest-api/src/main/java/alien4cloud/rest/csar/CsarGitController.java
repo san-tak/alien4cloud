@@ -5,6 +5,7 @@ import java.util.List;
 import javax.inject.Inject;
 import javax.validation.Valid;
 
+import io.swagger.annotations.Api;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -13,7 +14,7 @@ import alien4cloud.audit.annotation.Audit;
 import alien4cloud.csar.services.CsarGitRepositoryService;
 import alien4cloud.csar.services.CsarGitService;
 import alien4cloud.dao.model.GetMultipleDataResult;
-import alien4cloud.model.components.Csar;
+import org.alien4cloud.tosca.model.Csar;
 import alien4cloud.model.git.CsarGitRepository;
 import alien4cloud.rest.model.*;
 import alien4cloud.tosca.parser.ParsingErrorLevel;
@@ -23,6 +24,7 @@ import io.swagger.annotations.ApiParam;
 
 @RestController
 @RequestMapping(value = { "/rest/csarsgit", "/rest/v1/csarsgit", "/rest/latest/csarsgit" })
+@Api(value = "", description = "Operations on CSAR Git")
 public class CsarGitController {
     @Inject
     private CsarGitService csarGitService;

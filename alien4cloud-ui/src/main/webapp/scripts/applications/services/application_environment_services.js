@@ -5,7 +5,7 @@ define(function (require) {
   var angular = require('angular');
 
   modules.get('a4c-applications', ['ngResource']).factory('applicationEnvironmentServices', ['$resource',
-    function($resource) {
+    function ($resource) {
       // Search for application environments
       var searchEnvironmentResource = $resource('rest/latest/applications/:applicationId/environments/search', {}, {
         'search': {
@@ -17,11 +17,21 @@ define(function (require) {
         }
       });
 
-      var getAllEnvironmentsForApplication = function(applicationId) {
+      var applicationEnvironmentInputsCandidateResource = $resource('rest/latest/applications/:applicationId/environments/input-candidates', {}, {
+        'search': {
+          method: 'POST',
+          isArray: false,
+          headers: {
+            'Content-Type': 'application/json; charset=UTF-8'
+          }
+        }
+      });
+
+      var getAllEnvironmentsForApplication = function (applicationId) {
         var searchRequestObject = {
           'query': '',
           'from': 0,
-          'size': 50
+          'size': 1000
         };
         return this.searchEnvironment({
           applicationId: applicationId
@@ -51,6 +61,13 @@ define(function (require) {
           method: 'PUT'
         }
       });
+
+      var applicationEnvironmentTopologyVersionUpdate =
+        $resource('rest/latest/applications/:applicationId/environments/:applicationEnvironmentId/topology-version', {}, {
+          'update': {
+            method: 'PUT'
+          }
+        });
 
       var applicationEnvironmentTopology = $resource('rest/latest/applications/:applicationId/environments/:applicationEnvironmentId/topology', {}, {
         'get': {
@@ -123,6 +140,8 @@ define(function (require) {
       return {
         'create': applicationEnvironmentResource.create,
         'get': applicationEnvironmentMiscResource.get,
+        'getInputCandidates': applicationEnvironmentInputsCandidateResource.search,
+        'updateTopologyVersion': applicationEnvironmentTopologyVersionUpdate.update,
         'delete': applicationEnvironmentMiscResource.delete,
         'update': applicationEnvironmentMiscResource.update,
         'environmentTypeList': envEnumTypes.get,

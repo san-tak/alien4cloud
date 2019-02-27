@@ -1,21 +1,24 @@
 package alien4cloud.topology.validation;
 
-import alien4cloud.component.CSARRepositorySearchService;
-import alien4cloud.exception.NotFoundException;
-import alien4cloud.model.components.CSARDependency;
-import alien4cloud.model.components.CapabilityDefinition;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.topology.Capability;
-import alien4cloud.model.topology.NodeTemplate;
-import alien4cloud.model.topology.RelationshipTemplate;
-import alien4cloud.topology.TopologyServiceCore;
-import org.springframework.stereotype.Component;
-
-import javax.annotation.Resource;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import javax.annotation.Resource;
+
+import org.alien4cloud.tosca.catalog.index.IToscaTypeSearchService;
+import org.alien4cloud.tosca.model.CSARDependency;
+import org.alien4cloud.tosca.model.definitions.CapabilityDefinition;
+import org.alien4cloud.tosca.model.templates.Capability;
+import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.utils.TopologyUtils;
+import org.alien4cloud.tosca.utils.TopologyUtils.RelationshipEntry;
+import org.springframework.stereotype.Component;
+
+import alien4cloud.exception.NotFoundException;
+import alien4cloud.topology.TopologyServiceCore;
 
 /**
  *
@@ -23,7 +26,7 @@ import java.util.Set;
 @Component
 public class TopologyCapabilityBoundsValidationServices {
     @Resource
-    private CSARRepositorySearchService csarRepoSearchService;
+    private IToscaTypeSearchService toscaTypeSearchService;
     @Resource
     private TopologyServiceCore topologyServiceCore;
 
@@ -31,8 +34,7 @@ public class TopologyCapabilityBoundsValidationServices {
     public boolean isCapabilityUpperBoundReachedForTarget(String nodeTemplateName, Map<String, NodeTemplate> nodeTemplates, String capabilityName,
             Set<CSARDependency> dependencies) {
         NodeTemplate nodeTemplate = nodeTemplates.get(nodeTemplateName);
-        IndexedNodeType relatedIndexedNodeType = csarRepoSearchService.getRequiredElementInDependencies(IndexedNodeType.class, nodeTemplate.getType(),
-                dependencies);
+        NodeType relatedIndexedNodeType = toscaTypeSearchService.getRequiredElementInDependencies(NodeType.class, nodeTemplate.getType(), dependencies);
         chekCapability(nodeTemplateName, capabilityName, nodeTemplate);
 
         CapabilityDefinition capabilityDefinition = getCapabilityDefinition(relatedIndexedNodeType.getCapabilities(), capabilityName);
@@ -40,14 +42,14 @@ public class TopologyCapabilityBoundsValidationServices {
             return false;
         }
 
-        List<RelationshipTemplate> targetRelatedRelationships = topologyServiceCore.getTargetRelatedRelatonshipsTemplate(nodeTemplateName, nodeTemplates);
+        List<RelationshipEntry> targetRelatedRelationships = TopologyUtils.getTargetRelationships(nodeTemplateName, nodeTemplates);
         if (targetRelatedRelationships == null || targetRelatedRelationships.isEmpty()) {
             return false;
         }
 
         int count = 0;
-        for (RelationshipTemplate rel : targetRelatedRelationships) {
-            if (rel.getTargetedCapabilityName().equals(capabilityName)) {
+        for (RelationshipEntry relationshipEntry : targetRelatedRelationships) {
+            if (relationshipEntry.getRelationship().getTargetedCapabilityName().equals(capabilityName)) {
                 count++;
             }
         }

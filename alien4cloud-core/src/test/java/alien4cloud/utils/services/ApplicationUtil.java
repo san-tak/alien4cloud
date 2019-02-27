@@ -7,17 +7,17 @@ import java.nio.file.Paths;
 
 import javax.annotation.Resource;
 
-import lombok.SneakyThrows;
-import lombok.extern.slf4j.Slf4j;
-
+import org.alien4cloud.tosca.catalog.ArchiveParser;
+import org.alien4cloud.tosca.model.templates.Topology;
 import org.springframework.stereotype.Component;
 
-import alien4cloud.model.topology.Topology;
-import alien4cloud.tosca.ArchiveParser;
 import alien4cloud.tosca.model.ArchiveRoot;
 import alien4cloud.tosca.parser.ParsingException;
 import alien4cloud.tosca.parser.ParsingResult;
+import alien4cloud.utils.AlienConstants;
 import alien4cloud.utils.FileUtil;
+import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 
 @Component
 @Slf4j
@@ -26,10 +26,9 @@ public class ApplicationUtil {
     private ArchiveParser parser;
 
     @SneakyThrows
-    public Topology parseYamlTopology(String topologyPath) throws IOException, ParsingException {
+    public ParsingResult<ArchiveRoot> parseYamlTopology(String topologyPath) throws IOException, ParsingException {
         Path zipPath = Files.createTempFile("csar", ".zip");
         FileUtil.zip(Paths.get(topologyPath + ".yml"), zipPath);
-        ParsingResult<ArchiveRoot> parsingResult = parser.parse(zipPath);
-        return parsingResult.getResult().getTopology();
+        return parser.parse(zipPath, AlienConstants.GLOBAL_WORKSPACE_ID);
     }
 }

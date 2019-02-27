@@ -6,6 +6,9 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
+
+import org.yaml.snakeyaml.Yaml;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonFactory;
@@ -27,6 +30,8 @@ public final class YamlParserUtil {
 
     private static final ObjectMapper YAML_OBJECT_MAPPER = createYamlObjectMapper();
 
+    private static final Yaml snakeYaml = new Yaml();
+
     /**
      * Creates YAML object mapper
      * 
@@ -44,7 +49,7 @@ public final class YamlParserUtil {
      */
     private static ObjectMapper newObjectMapper(JsonFactory factory) {
         ObjectMapper mapper = new ObjectMapper(factory);
-        mapper.setPropertyNamingStrategy(PropertyNamingStrategy.CAMEL_CASE_TO_LOWER_CASE_WITH_UNDERSCORES);
+        mapper.setPropertyNamingStrategy(PropertyNamingStrategy.SNAKE_CASE);
         mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
         mapper.setSerializationInclusion(JsonInclude.Include.NON_EMPTY);
         mapper.configure(SerializationFeature.INDENT_OUTPUT, true);
@@ -147,5 +152,17 @@ public final class YamlParserUtil {
      */
     public static String toYaml(Object object) throws IOException {
         return YAML_OBJECT_MAPPER.writeValueAsString(object);
+    }
+
+    public static String dump(Object object) {
+        return object == null ? null : (object instanceof Map ? dumpAsMap(object) : snakeYaml.dump(object));
+    }
+
+    public static String dumpAsMap(Object object) {
+        return snakeYaml.dumpAsMap(object);
+    }
+
+    public static Object load(String yamlString) {
+        return snakeYaml.load(yamlString);
     }
 }

@@ -4,34 +4,34 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 
-import lombok.Getter;
-import lombok.Setter;
-import lombok.extern.slf4j.Slf4j;
-import alien4cloud.csar.services.ICsarDependencyLoader;
-import alien4cloud.exception.NotFoundException;
-import alien4cloud.model.components.CSARDependency;
-import alien4cloud.utils.VersionUtil;
+import org.alien4cloud.tosca.catalog.index.ICsarDependencyLoader;
+import org.alien4cloud.tosca.model.CSARDependency;
 
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+
+import alien4cloud.utils.VersionUtil;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 
 @Getter
 @Setter
 @Slf4j
 public class ToscaTypeLoader {
-
+    /** Map of type names per archives. */
     private Map<CSARDependency, Set<String>> dependenciesMap = Maps.newHashMap();
-
+    /** Count the usage of a given type in the current context. */
     private Map<String, Integer> typeUsagesMap = Maps.newHashMap();
 
-    private ICsarDependencyLoader dependencyLoader;
+    private ICsarDependencyLoader csarDependencyLoader;
 
-    public ToscaTypeLoader(ICsarDependencyLoader dependencyLoader) {
-        this.dependencyLoader = dependencyLoader;
+    public ToscaTypeLoader(ICsarDependencyLoader csarDependencyLoader) {
+        this.csarDependencyLoader = csarDependencyLoader;
     }
 
     public Set<CSARDependency> getLoadedDependencies() {
-        return dependenciesMap.keySet();
+        return Sets.newHashSet(dependenciesMap.keySet());
     }
 
     /**
@@ -65,10 +65,8 @@ public class ToscaTypeLoader {
                 // Still used
                 typeUsagesMap.put(type, currentUsageCount - 1);
             }
-        } else {
-            log.error("Unload a type which is not used [" + type + "]");
-            throw new NotFoundException("Remove a type which is not used [" + type + "]");
         }
+
         if (log.isDebugEnabled()) {
             log.debug("Type usage [" + typeUsagesMap + "]");
             log.debug("Dependencies usage [" + dependenciesMap + "]");
@@ -86,38 +84,48 @@ public class ToscaTypeLoader {
         return null;
     }
 
-    private void addNewDependency(CSARDependency dependency, String type) {
+    /**
+     * Add a dependency
+     * 
+     * @param dependency
+     * @param type
+     * @return True if the dependecy has been upgraded into the topology. False if not.
+     */
+    private boolean addNewDependency(CSARDependency dependency, String type) {
         CSARDependency currentDependency = getDependencyWithName(dependency.getName());
         // New dependency that never exists before
         if (currentDependency == null) {
             dependenciesMap.put(dependency, Sets.newHashSet(type));
-            return;
+            return false;
         }
-        // Dependency that already existed
+        // Dependency that already existed,
+        // The new version is more recent, we will override with new version with warning
         if (VersionUtil.compare(dependency.getVersion(), currentDependency.getVersion()) > 0) {
-            // The new version is more recent, we will override with new version with warning
             Set<String> typesLoadedByConflictingArchive = dependenciesMap.remove(currentDependency);
             typesLoadedByConflictingArchive.add(type);
             dependenciesMap.put(dependency, typesLoadedByConflictingArchive);
             log.warn("Version conflicting for archive [" + dependency.getName() + "] override current version [" + currentDependency.getVersion() + "] with ["
                     + dependency.getVersion() + "]");
-        } else {
-            log.warn("Version conflicting for archive [" + dependency.getName() + "] do not override and use current version ["
-                    + currentDependency.getVersion()
-                    + "] ignore old version [" + dependency.getVersion() + "]");
-            dependenciesMap.get(currentDependency).add(type);
+            return true;
         }
+
+        log.warn("Version conflicting for archive [" + dependency.getName() + "] do not override and use current version [" + currentDependency.getVersion()
+                + "] ignore old version [" + dependency.getVersion() + "]");
+        dependenciesMap.get(currentDependency).add(type);
+        return false;
     }
 
     /**
      * Add directDependency for the given type from the given archive.
      * If the directDependency is of an deprecated version ( < than found in the existing dependencies), ignore it.
      * If the directDependency is of a more recent version, force the dependency of the topology to the more recent one
-     * 
-     * @param directDependency the direct directDependency to load the type
+     *
      * @param type name of the type
+     * @param directDependency the direct directDependency to load the type
+     * @return True if the dependency has been upgraded into the topology. False if not.
      */
-    public void loadType(String type, CSARDependency directDependency) {
+    public boolean loadType(String type, CSARDependency directDependency) {
+        boolean upgraded = false;
         if (log.isDebugEnabled()) {
             log.debug("Load type [" + type + "] from dependency [" + directDependency + "]");
         }
@@ -130,14 +138,17 @@ public class ToscaTypeLoader {
         typeUsagesMap.put(type, currentUsageCount + 1);
         if (typesLoadedByDependency != null) {
             typesLoadedByDependency.add(type);
+            // make sure we replace the key because the Equals on CSARDependency is only based on the name and the version
+            dependenciesMap.remove(directDependency);
+            dependenciesMap.put(directDependency, typesLoadedByDependency);
         } else {
-            addNewDependency(directDependency, type);
+            upgraded = addNewDependency(directDependency, type);
         }
-        Set<CSARDependency> transitiveDependencies = dependencyLoader.getDependencies(directDependency.getName(), directDependency.getVersion());
+        Set<CSARDependency> transitiveDependencies = csarDependencyLoader.getDependencies(directDependency.getName(), directDependency.getVersion());
         for (CSARDependency transitiveDependency : transitiveDependencies) {
             Set<String> transitiveTypesLoadedByDependency = dependenciesMap.get(transitiveDependency);
             if (transitiveTypesLoadedByDependency == null) {
-                addNewDependency(transitiveDependency, type);
+                addNewDependency(csarDependencyLoader.buildDependencyBean(transitiveDependency.getName(), transitiveDependency.getVersion()), type);
             } else {
                 transitiveTypesLoadedByDependency.add(type);
             }
@@ -146,5 +157,6 @@ public class ToscaTypeLoader {
             log.debug("Type usage [" + typeUsagesMap + "]");
             log.debug("Dependencies usage [" + dependenciesMap + "]");
         }
+        return upgraded;
     }
 }

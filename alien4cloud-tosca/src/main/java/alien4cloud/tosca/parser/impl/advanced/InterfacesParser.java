@@ -2,6 +2,9 @@ package alien4cloud.tosca.parser.impl.advanced;
 
 import java.util.Map;
 
+import javax.annotation.PostConstruct;
+import javax.annotation.Resource;
+
 import org.elasticsearch.common.collect.Maps;
 import org.springframework.stereotype.Component;
 import org.yaml.snakeyaml.nodes.MappingNode;
@@ -9,18 +12,24 @@ import org.yaml.snakeyaml.nodes.Node;
 import org.yaml.snakeyaml.nodes.ScalarNode;
 import org.yaml.snakeyaml.nodes.SequenceNode;
 
-import alien4cloud.paas.plan.ToscaNodeLifecycleConstants;
-import alien4cloud.paas.plan.ToscaRelationshipLifecycleConstants;
-import alien4cloud.model.components.Interface;
+import org.alien4cloud.tosca.model.definitions.Interface;
 import alien4cloud.tosca.parser.ParserUtils;
 import alien4cloud.tosca.parser.ParsingContextExecution;
+import alien4cloud.tosca.parser.impl.base.BaseParserFactory;
 import alien4cloud.tosca.parser.impl.base.MapParser;
-import alien4cloud.tosca.parser.impl.base.ReferencedParser;
 
 @Component
 public class InterfacesParser extends MapParser<Interface> {
+    @Resource
+    private BaseParserFactory baseParserFactory;
+
     public InterfacesParser() {
-        super(new ReferencedParser("interface"), "Interfaces");
+        super(null, "Interfaces");
+    }
+
+    @PostConstruct
+    public void init() {
+        super.setValueParser(baseParserFactory.getReferencedParser("interface"));
     }
 
     @Override
@@ -37,7 +46,8 @@ public class InterfacesParser extends MapParser<Interface> {
             }
             return cleanedInterfaces;
         }
-        // Specific for interfaces node can define or only reference interfaces
+        // In a node type interfaces definition allow to reference an interface type or multiple ones using array, in that case the keyname of the interface is
+        // the actual value type.
         Map<String, Interface> interfaces = Maps.newHashMap();
         if (node instanceof SequenceNode) {
             for (Node interfaceTypeNode : ((SequenceNode) node).getValue()) {
@@ -50,15 +60,14 @@ public class InterfacesParser extends MapParser<Interface> {
         } else if (node instanceof ScalarNode) {
             addInterfaceFromType((ScalarNode) node, interfaces, context);
         } else {
-            // add an error
-            ParserUtils.addTypeError(node, context.getParsingErrors(), "Interfaces");
+            ParserUtils.addTypeError(node, context.getParsingErrors(), "interfaces");
         }
         return interfaces;
     }
 
     private void addInterfaceFromType(ScalarNode node, Map<String, Interface> interfaces, ParsingContextExecution context) {
         // FIXME look for interface type in the REPO
-        String interfaceType = InterfaceParser.getInterfaceType(((ScalarNode) node).getValue());
+        String interfaceType = InterfaceParser.getInterfaceType(node.getValue());
         Interface interfaz = new Interface();
         interfaz.setType(interfaceType);
         interfaces.put(interfaceType, interfaz);

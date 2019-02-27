@@ -15,35 +15,57 @@ define(function(require) {
         return {
           process: function(deploymentTopology) {
             topologyJsonProcessor.process(deploymentTopology);
-            if (!_.isEmpty(deploymentTopology.topology.substitutedNodes)) {
+            if (!_.isEmpty(deploymentTopology.topology.substitutedNodes) && _.defined(deploymentTopology.availableSubstitutions.substitutionsTemplates)) {
               for (var nodeId in deploymentTopology.topology.substitutedNodes) {
                 if (deploymentTopology.topology.substitutedNodes.hasOwnProperty(nodeId)) {
                   var locationResourceTemplateId = deploymentTopology.topology.substitutedNodes[nodeId];
-                  deploymentTopology.topology.substitutedNodes[nodeId] = _.clone(deploymentTopology.locationResourceTemplates[locationResourceTemplateId]);
-                  deploymentTopology.topology.substitutedNodes[nodeId].template = deploymentTopology.topology.nodeTemplates[nodeId];
+                  deploymentTopology.topology.substitutedNodes[nodeId] = _.cloneDeep(deploymentTopology.availableSubstitutions.substitutionsTemplates[locationResourceTemplateId]);
+                  deploymentTopology.topology.substitutedNodes[nodeId].template = deploymentTopology.topology.matchReplacedNodes[nodeId];
                 }
               }
-              locationResourcesProcessor.processLocationResourceTemplatesMap(deploymentTopology.locationResourceTemplates);
             }
-            this.processSubstitutionResources(deploymentTopology.availableSubstitutions);
+
+            // policies
+            if (!_.isEmpty(deploymentTopology.topology.substitutedPolicies) && _.defined(deploymentTopology.availableSubstitutions.substitutionsPoliciesTemplates)) {
+              _.forEach(deploymentTopology.topology.substitutedPolicies, function(templateId, policyId){
+                deploymentTopology.topology.substitutedPolicies[policyId] = _.cloneDeep(deploymentTopology.availableSubstitutions.substitutionsPoliciesTemplates[templateId]);
+                deploymentTopology.topology.substitutedPolicies[policyId].template = deploymentTopology.topology.policies[policyId];
+              });
+            }
+
+            if (_.defined(deploymentTopology.availableSubstitutions)) {
+              this.processSubstitutionResources(deploymentTopology.availableSubstitutions);
+            }
           },
           processSubstitutionResources: function(substitutionResources) {
             var availableSubstitutionsIds = substitutionResources.availableSubstitutions;
             substitutionResources.availableSubstitutions = {};
-            for (var nodeId in availableSubstitutionsIds) {
-              if (availableSubstitutionsIds.hasOwnProperty(nodeId)) {
-                substitutionResources.availableSubstitutions[nodeId] = _.map(availableSubstitutionsIds[nodeId], function(resourceId) {
-                  return substitutionResources.substitutionsTemplates[resourceId];
-                });
+            function mapTemplates(resourceId) {
+              return substitutionResources.substitutionsTemplates[resourceId];
+            }
+            for (var nodeTemplateId in availableSubstitutionsIds) {
+              if (availableSubstitutionsIds.hasOwnProperty(nodeTemplateId)) {
+                substitutionResources.availableSubstitutions[nodeTemplateId] = _.map(availableSubstitutionsIds[nodeTemplateId], mapTemplates);
               }
             }
             listToMapService.processMap(substitutionResources.substitutionTypes.nodeTypes, 'properties');
             listToMapService.processMap(substitutionResources.substitutionTypes.capabilityTypes, 'properties');
-            for (var nodeId in substitutionResources.availableSubstitutions) {
-              if (substitutionResources.availableSubstitutions.hasOwnProperty(nodeId)) {
-                locationResourcesProcessor.processLocationResourceTemplates(substitutionResources.availableSubstitutions[nodeId]);
-              }
-            }
+            _.forEach(substitutionResources.availableSubstitutions, function(templates){
+              locationResourcesProcessor.processLocationResourceTemplates(templates);
+            });
+
+            //policies
+            var availablePoliciesSubstitutionsIds = substitutionResources.availablePoliciesSubstitutions;
+            substitutionResources.availablePoliciesSubstitutions = {};
+            _.forEach(availablePoliciesSubstitutionsIds, function(value, policyId){
+              substitutionResources.availablePoliciesSubstitutions[policyId] = _.map(value, function(resourceId){
+                return substitutionResources.substitutionsPoliciesTemplates[resourceId];
+              });
+            });
+            listToMapService.processMap(substitutionResources.substitutionTypes.policyTypes, 'properties');
+            _.forEach(substitutionResources.availablePoliciesSubstitutions, function(templates){
+              locationResourcesProcessor.processTemplates(templates);
+            });
           }
         };
       } // function

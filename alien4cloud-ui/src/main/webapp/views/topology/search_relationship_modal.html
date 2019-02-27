@@ -51,9 +51,9 @@
             <span>{{match.template.name}}</span> ( {{match.template.type}} )
           </h4>
         </div>
-        <div collapse="isTargetCollapsed" name="{{match.template.name}}_capabilities">
+        <div uib-collapse="isTargetCollapsed" name="{{match.template.name}}_capabilities">
           <div ng-repeat="capability in  match.capabilities"
-            class="topology-level clickable "
+            class="clickable "
             ng-click="onSelectedTarget(match.template.name, capability.id)"
             style="margin-bottom: 5px"
             name="{{match.template.name}}_{{capability.id}}">
@@ -64,8 +64,12 @@
     </div>
     <!-- Step = 2 selectRelationship -->
     <div ng-switch-when="2" class="row">
-      <alien-search-relationship-type refresh="refresh"
-        on-select-item="onSelectedRelationship(item)" hidden-filters="relationshipHiddenFilters">
+      <alien-search-relationship-type
+        refresh="refresh"
+        on-select-item="onSelectedRelationship(item)"
+        hidden-filters="relationshipHiddenFilters"
+        default-filters="defaultFilters"
+        static-facets="staticFacets">
       </alien-search-relationship-type>
     </div>
     <!-- Step = 3 selectName -->

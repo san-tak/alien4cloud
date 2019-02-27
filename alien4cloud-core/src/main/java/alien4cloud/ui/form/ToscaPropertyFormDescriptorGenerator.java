@@ -4,6 +4,7 @@ import static alien4cloud.ui.form.GenericFormConstants.ARRAY_TYPE;
 import static alien4cloud.ui.form.GenericFormConstants.COMPLEX_TYPE;
 import static alien4cloud.ui.form.GenericFormConstants.CONTENT_TYPE_KEY;
 import static alien4cloud.ui.form.GenericFormConstants.MAP_TYPE;
+import static alien4cloud.ui.form.GenericFormConstants.NOT_NULL_KEY;
 import static alien4cloud.ui.form.GenericFormConstants.ORDER_KEY;
 import static alien4cloud.ui.form.GenericFormConstants.PROPERTY_TYPE_KEY;
 import static alien4cloud.ui.form.GenericFormConstants.TOSCA_DEFINITION_KEY;
@@ -15,64 +16,69 @@ import java.util.Set;
 
 import javax.annotation.Resource;
 
+import org.alien4cloud.tosca.model.CSARDependency;
+import org.alien4cloud.tosca.model.definitions.PropertyDefinition;
+import org.alien4cloud.tosca.model.types.DataType;
+import org.alien4cloud.tosca.model.types.PrimitiveDataType;
+import org.alien4cloud.tosca.normative.types.ToscaTypes;
 import org.springframework.stereotype.Component;
-
-import alien4cloud.component.ICSARRepositorySearchService;
-import alien4cloud.exception.InvalidArgumentException;
-import alien4cloud.model.components.CSARDependency;
-import alien4cloud.model.components.IndexedDataType;
-import alien4cloud.model.components.PrimitiveIndexedDataType;
-import alien4cloud.model.components.PropertyDefinition;
-import alien4cloud.tosca.normative.ToscaType;
 
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+
+import alien4cloud.component.ICSARRepositorySearchService;
+import alien4cloud.exception.InvalidArgumentException;
 
 @Component
 public class ToscaPropertyFormDescriptorGenerator {
 
     @Resource
-    private ICSARRepositorySearchService searchService;
+    private ICSARRepositorySearchService csarRepositorySearchService;
 
     public Map<String, Object> generateDescriptor(PropertyDefinition propertyDefinition, Set<CSARDependency> dependencies) {
         return doGenerateDescriptor(Sets.<String> newHashSet(), propertyDefinition, dependencies);
     }
 
     private Map<String, Object> doGenerateDescriptor(Set<String> processedDataTypes, PropertyDefinition propertyDefinition, Set<CSARDependency> dependencies) {
-        if (ToscaType.isSimple(propertyDefinition.getType())) {
-            return generateDescriptorForSimpleType(propertyDefinition);
-        } else if (ToscaType.LIST.equals(propertyDefinition.getType())) {
+        Map<String, Object> dataTypeDescriptors;
+        if (ToscaTypes.isSimple(propertyDefinition.getType())) {
+            dataTypeDescriptors = generateDescriptorForSimpleType(propertyDefinition);
+        } else if (ToscaTypes.LIST.equals(propertyDefinition.getType())) {
             PropertyDefinition entryDefinition = propertyDefinition.getEntrySchema();
             if (entryDefinition == null) {
                 throw new InvalidArgumentException("List type without entry schema");
             }
             return generateDescriptorForListType(processedDataTypes, entryDefinition, dependencies);
-        } else if (ToscaType.MAP.equals(propertyDefinition.getType())) {
+        } else if (ToscaTypes.MAP.equals(propertyDefinition.getType())) {
             PropertyDefinition entryDefinition = propertyDefinition.getEntrySchema();
             if (entryDefinition == null) {
                 throw new InvalidArgumentException("Map type without entry schema");
             }
-            return generateDescriptorForMapType(processedDataTypes, entryDefinition, dependencies);
+            dataTypeDescriptors = generateDescriptorForMapType(processedDataTypes, entryDefinition, dependencies);
         } else {
-            IndexedDataType dataType = searchService.getElementInDependencies(IndexedDataType.class, propertyDefinition.getType(), dependencies);
+            DataType dataType = csarRepositorySearchService.getElementInDependencies(DataType.class, propertyDefinition.getType(), dependencies);
             if (dataType == null) {
                 throw new InvalidArgumentException("Data type <" + propertyDefinition.getType() + "> do not exist in dependencies " + dependencies);
             }
             if (processedDataTypes.add(dataType.getElementId())) {
-                return generateDescriptorForDataType(processedDataTypes, dataType, dependencies);
+                dataTypeDescriptors = generateDescriptorForDataType(processedDataTypes, dataType, dependencies);
             } else {
-                return generateDescriptorForSimpleType(propertyDefinition);
+                dataTypeDescriptors = generateDescriptorForSimpleType(propertyDefinition);
             }
         }
+        if (propertyDefinition.isRequired()) {
+            dataTypeDescriptors.put(NOT_NULL_KEY, true);
+        }
+        return dataTypeDescriptors;
     }
 
-    private Map<String, Object> generateDescriptorForDataType(Set<String> processedDataTypes, IndexedDataType dataType, Set<CSARDependency> dependencies) {
+    private Map<String, Object> generateDescriptorForDataType(Set<String> processedDataTypes, DataType dataType, Set<CSARDependency> dependencies) {
         Map<String, Object> dataTypeDescriptors = Maps.newHashMap();
-        if (dataType instanceof PrimitiveIndexedDataType) {
+        if (dataType instanceof PrimitiveDataType) {
             dataTypeDescriptors.put(TYPE_KEY, TOSCA_TYPE);
             PropertyDefinition propertyDefinition = new PropertyDefinition();
             propertyDefinition.setType(dataType.getDerivedFrom().get(0));
-            propertyDefinition.setConstraints(((PrimitiveIndexedDataType) dataType).getConstraints());
+            propertyDefinition.setConstraints(((PrimitiveDataType) dataType).getConstraints());
             dataTypeDescriptors.put(TOSCA_DEFINITION_KEY, propertyDefinition);
         } else {
             dataTypeDescriptors.put(TYPE_KEY, COMPLEX_TYPE);

@@ -5,8 +5,11 @@ define(function (require) {
   var states = require('states');
   var _ = require('lodash');
 
-  require('scripts/orchestrators/controllers/orchestrator_location_resources');
   require('scripts/orchestrators/directives/orchestrator_location_resources');
+  require('scripts/orchestrators/services/location_resources_security_service');
+  require('scripts/users/directives/authorize_users');
+  require('scripts/users/directives/authorize_groups');
+  require('scripts/users/directives/authorize_apps');
 
   states.state('admin.orchestrators.details.locations.nodes', {
     url: '/nodes',
@@ -21,8 +24,8 @@ define(function (require) {
     }
   });
 
-  modules.get('a4c-orchestrators').controller('OrchestratorNodesCtrl', ['$scope', '$resource', 'locationResourcesProcessor',
-    function($scope, $resource, locationResourcesProcessor) {
+  modules.get('a4c-orchestrators').controller('OrchestratorNodesCtrl', ['$scope', '$resource', 'locationResourcesProcessor', '$uibModal', 'locationResourcesSecurity',
+    function($scope, $resource, locationResourcesProcessor, $uibModal, locationResourcesSecurity) {
 
       function removeGeneratedResources() {
           _.remove($scope.context.locationResources.nodeTemplates, function(locationResource){
@@ -47,6 +50,14 @@ define(function (require) {
             $scope.autoConfiguring=false;
           });
       };
+
+
+      /************************************
+      *  For authorizations directives
+      /************************************/
+
+      locationResourcesSecurity('rest/latest/orchestrators/:orchestratorId/locations/:locationId/resources', $scope);
+
     }
   ]);
 }); // define

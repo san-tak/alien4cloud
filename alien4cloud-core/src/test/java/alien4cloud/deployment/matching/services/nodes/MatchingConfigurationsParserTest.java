@@ -5,6 +5,7 @@ import alien4cloud.tosca.parser.ParsingException;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
@@ -14,6 +15,7 @@ import java.nio.file.Paths;
 
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration("classpath:matching/parser-application-context.xml")
+@DirtiesContext
 public class MatchingConfigurationsParserTest {
     @Inject
     private MatchingConfigurationsParser parser;
@@ -22,7 +24,7 @@ public class MatchingConfigurationsParserTest {
     public void testParsing() throws FileNotFoundException, ParsingException {
         MatchingConfigurations configurations = parser.parseFile(Paths.get("src/test/resources/matching/mock-resources-matching-config.yml")).getResult();
         Assert.assertEquals(1, configurations.getMatchingConfigurations().size());
-        MatchingConfiguration computeConf = configurations.getMatchingConfigurations().get("alien.nodes.mock.Compute");
+        MatchingConfiguration computeConf = configurations.getMatchingConfigurations().get("org.alien4cloud.nodes.mock.Compute");
         Assert.assertNotNull(computeConf);
         Assert.assertEquals(0, computeConf.getProperties().size());
         Assert.assertEquals(2, computeConf.getCapabilities().size());

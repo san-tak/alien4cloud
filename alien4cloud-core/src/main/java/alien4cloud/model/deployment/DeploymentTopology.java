@@ -1,28 +1,38 @@
 package alien4cloud.model.deployment;
 
-import java.util.Date;
-import java.util.Map;
-import java.util.Set;
-
+import alien4cloud.json.deserializer.NodeTemplateDeserializer;
+import alien4cloud.json.deserializer.PropertyValueDeserializer;
+import alien4cloud.utils.jackson.JSonMapEntryArrayDeSerializer;
+import alien4cloud.utils.jackson.JSonMapEntryArraySerializer;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import org.alien4cloud.tosca.model.CSARDependency;
+import org.alien4cloud.tosca.model.definitions.AbstractPropertyValue;
+import org.alien4cloud.tosca.model.definitions.DeploymentArtifact;
+import org.alien4cloud.tosca.model.definitions.PropertyValue;
+import org.alien4cloud.tosca.model.templates.NodeGroup;
+import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.templates.PolicyTemplate;
+import org.alien4cloud.tosca.model.templates.Topology;
+import org.elasticsearch.annotation.BooleanField;
 import org.elasticsearch.annotation.ESObject;
 import org.elasticsearch.annotation.ObjectField;
 import org.elasticsearch.annotation.StringField;
 import org.elasticsearch.annotation.query.TermFilter;
 import org.elasticsearch.mapping.IndexType;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
-
-import alien4cloud.exception.IndexingServiceException;
-import alien4cloud.model.components.CSARDependency;
-import alien4cloud.model.topology.NodeGroup;
-import alien4cloud.model.topology.NodeTemplate;
-import alien4cloud.model.topology.Topology;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Deployment topology is the topology for a given environment.
@@ -39,6 +49,11 @@ import lombok.Setter;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class DeploymentTopology extends Topology {
+    private String id;
+    /** This flag is used to prevent update of a deployed archive as this may have consequences. */
+    @TermFilter
+    @BooleanField
+    private boolean isDeployed = false;
     @TermFilter
     @StringField(includeInAll = false, indexType = IndexType.not_analyzed)
     private String versionId;
@@ -77,28 +92,49 @@ public class DeploymentTopology extends Topology {
     @ObjectField(enabled = false)
     private Map<String, NodeTemplate> originalNodes = Maps.newHashMap();
 
+    @ObjectField(enabled = false)
+    @JsonDeserialize(using = JSonMapEntryArrayDeSerializer.class, contentUsing = NodeTemplateDeserializer.class)
+    @JsonSerialize(using = JSonMapEntryArraySerializer.class)
+    private Map<String, NodeTemplate> matchReplacedNodes = Maps.newHashMap();
+
     /** Configuration of the deployment properties specific to the orchestrator if any. */
     @ObjectField(enabled = false)
     private Map<String, String> providerDeploymentProperties;
-    /** Values of the input properties as configured by the user. */
+    /** Values of the input properties as configured by the deployer. */
+    /** Migration Note: all data previously stored into 'inputProperties' should be moved into 'deployerInputProperties' */
     @ObjectField(enabled = false)
-    private Map<String, String> inputProperties;
-    // TODO add also the input artifacts here. /-> Note that they should/could be repository based.
+    @JsonDeserialize(contentUsing = PropertyValueDeserializer.class)
+    private Map<String, AbstractPropertyValue> deployerInputProperties;
+
+    @JsonIgnore
+    public Map<String, AbstractPropertyValue> getAllInputProperties() {
+        HashMap<String, AbstractPropertyValue> map = Maps.newHashMap();
+        if (deployerInputProperties != null) {
+            map.putAll(deployerInputProperties);
+        }
+
+        if (preconfiguredInputProperties != null) {
+            map.putAll(preconfiguredInputProperties);
+        }
+
+        return map;
+    }
+
+    /** Values of the input properties configured with the input file */
+    @ObjectField(enabled = false)
+    @JsonDeserialize(contentUsing = PropertyValueDeserializer.class)
+    private Map<String, PropertyValue> preconfiguredInputProperties;
+
+    @ObjectField(enabled = false)
+    private Map<String, DeploymentArtifact> uploadedInputArtifacts;
 
     /**
-     * Utility method to generate an id for a deployment topology by concatenating version id and environment id
-     *
-     * @param versionId id of the version
-     * @param environmentId id of the environment
-     * @return concatenated id
+     * The map that contains the user selected matching for policies of the topology. key is the initial topology policy node id, value is the
+     * location policy resource id.
      */
-    public static String generateId(String versionId, String environmentId) {
-        if (versionId == null) {
-            throw new IndexingServiceException("version id is mandatory");
-        }
-        if (environmentId == null) {
-            throw new IndexingServiceException("environment id is mandatory");
-        }
-        return versionId + "::" + environmentId;
-    }
+    @ObjectField(enabled = false)
+    private Map<String, String> substitutedPolicies = Maps.newHashMap();
+
+    @ObjectField(enabled = false)
+    private Map<String, PolicyTemplate> originalPolicies = Maps.newHashMap();
 }

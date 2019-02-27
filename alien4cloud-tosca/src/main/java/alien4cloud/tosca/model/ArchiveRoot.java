@@ -1,18 +1,23 @@
 package alien4cloud.tosca.model;
 
-import alien4cloud.model.components.Csar;
-import alien4cloud.model.components.IndexedArtifactType;
-import alien4cloud.model.components.IndexedCapabilityType;
-import alien4cloud.model.components.IndexedDataType;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.components.IndexedRelationshipType;
-import alien4cloud.model.topology.Topology;
-import com.google.common.collect.Maps;
 import java.util.List;
 import java.util.Map;
+
+import org.alien4cloud.tosca.model.types.PolicyType;
+import org.apache.commons.collections4.MapUtils;
+
+import com.google.common.collect.Maps;
+
+import org.alien4cloud.tosca.model.Csar;
+import org.alien4cloud.tosca.model.types.ArtifactType;
+import org.alien4cloud.tosca.model.types.CapabilityType;
+import org.alien4cloud.tosca.model.types.DataType;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.model.types.RelationshipType;
+import org.alien4cloud.tosca.model.definitions.RepositoryDefinition;
+import org.alien4cloud.tosca.model.templates.Topology;
 import lombok.Getter;
 import lombok.Setter;
-import org.apache.commons.collections4.MapUtils;
 
 /** Root object to be de-serialized. */
 @Getter
@@ -28,18 +33,22 @@ public class ArchiveRoot {
 
     private List<ArchiveRoot> localImports;
 
-    private Map<String, IndexedNodeType> nodeTypes = Maps.newHashMap();
-    private Map<String, IndexedDataType> dataTypes = Maps.newHashMap();
-    private Map<String, IndexedRelationshipType> relationshipTypes = Maps.newHashMap();
-    private Map<String, IndexedCapabilityType> capabilityTypes = Maps.newHashMap();
-    private Map<String, IndexedArtifactType> artifactTypes = Maps.newHashMap();
+    private Map<String, RepositoryDefinition> repositories = Maps.newLinkedHashMap();
+
+    private Map<String, DataType> dataTypes = Maps.newLinkedHashMap();
+    private Map<String, ArtifactType> artifactTypes = Maps.newLinkedHashMap();
+    private Map<String, CapabilityType> capabilityTypes = Maps.newLinkedHashMap();
+    private Map<String, RelationshipType> relationshipTypes = Maps.newLinkedHashMap();
+    private Map<String, NodeType> nodeTypes = Maps.newLinkedHashMap();
+
+    private Map<String, PolicyType> policyTypes = Maps.newLinkedHashMap();
 
     /**
      * Indicates if this archive contains tosca types (node types, relationships, capabilities, artifacts).
      */
     public boolean hasToscaTypes() {
         return MapUtils.isNotEmpty(nodeTypes) || MapUtils.isNotEmpty(relationshipTypes) || MapUtils.isNotEmpty(capabilityTypes)
-                || MapUtils.isNotEmpty(artifactTypes);
+                || MapUtils.isNotEmpty(artifactTypes) || MapUtils.isNotEmpty(policyTypes);
     }
 
     /**

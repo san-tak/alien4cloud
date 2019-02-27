@@ -6,9 +6,10 @@ define(function(require) {
   var angular = require('angular');
 
   require('scripts/common/services/properties_services');
+  require('scripts/common/directives/info.js');
 
-  var ComplexPropertyModalCtrl = ['$scope', '$modalInstance', 'formDescriptorServices',
-    function($scope, $modalInstance, formDescriptorServices) {
+  var ComplexPropertyModalCtrl = ['$scope', '$uibModalInstance', 'formDescriptorServices',
+    function($scope, $uibModalInstance, formDescriptorServices) {
       $scope.configuration = {
         dependencies: $scope.dependencies
       };
@@ -22,37 +23,38 @@ define(function(require) {
       });
 
       $scope.save = function(value) {
-        $scope.propertySave(value);
+        // This method is called by the generic form only if something has indeed changed.
+        $scope.propertySave(value, undefined, true);
       };
 
       $scope.remove = function() {
         $scope.propertySave(undefined);
-        $modalInstance.dismiss(undefined);
+        $uibModalInstance.dismiss(undefined);
       };
 
       $scope.cancel = function() {
-        $modalInstance.dismiss('cancel');
+        $uibModalInstance.dismiss('cancel');
       };
     }
   ];
 
-  var PropertySuggestionModalCtrl = ['$scope', '$modalInstance',
-    function($scope, $modalInstance) {
+  var PropertySuggestionModalCtrl = ['$scope', '$uibModalInstance',
+    function($scope, $uibModalInstance) {
       $scope.result = '';
 
       $scope.create = function(result) {
-        $modalInstance.close(result);
+        $uibModalInstance.close(result);
       };
 
       $scope.cancel = function() {
-        $modalInstance.dismiss('cancel');
+        $uibModalInstance.dismiss('cancel');
       };
     }
   ];
 
 
-  modules.get('a4c-common', ['pascalprecht.translate']).controller('PropertiesCtrl', ['$scope', 'propertiesServices', '$translate', '$modal', '$timeout', 'propertySuggestionServices',
-    function($scope, propertiesServices, $translate, $modal, $timeout, propertySuggestionServices) {
+  modules.get('a4c-common', ['pascalprecht.translate']).controller('PropertiesCtrl', ['$scope', 'propertiesServices', '$translate', '$uibModal', '$timeout', 'propertySuggestionServices',
+    function($scope, propertiesServices, $translate, $uibModal, $timeout, propertySuggestionServices) {
       if (_.undefined($scope.translated)) {
         $scope.translated = false;
       }
@@ -98,9 +100,9 @@ define(function(require) {
       /* method private to factorise all call to the serve and trigge errors */
       var callSaveService = function(propertyRequest) {
         var saveResult = $scope.onSave(propertyRequest);
-
         // If the callback return a promise
         if (_.defined(saveResult) && _.defined(saveResult.then)) {
+          saveResult.catch(function(cat) { console.error('cat', cat);});
           return saveResult.then(function(saveResult) {
             if (_.defined(saveResult.error)) {
               // Constraint error display + translation
@@ -116,15 +118,19 @@ define(function(require) {
         }
       };
 
-      $scope.propertySave = function(data, unit) {
+      $scope.propertySave = function(data, unit, force) {
         delete $scope.unitError;
         if (_.isBoolean(data)) {
           data = data.toString();
-        } else if (_.isEmpty(data)) {
+        } else if (!_.isDate(data) &&_.isEmpty(data)) {
           data = null;
         }
 
-        if (!_.isEmpty(data) && _.defined($scope.definitionObject.units)) {
+        if (!force && !_.isEmpty($scope.definitionObject) && _.eq($scope.definitionObject.uiValue, data) && _.eq($scope.definitionObject.uiUnit, unit)) {
+          return;
+        }
+
+        if (_.defined(data) && _.defined($scope.definitionObject.units)) {
           if (_.undefined(unit)) {
             unit = $scope.definitionObject.uiUnit;
           }
@@ -136,7 +142,6 @@ define(function(require) {
           propertyDefinition: $scope.definition,
           propertyValue: data
         };
-
         if (_.defined($scope.definition.suggestionId) && _.defined(data) && data !== null) {
           return propertySuggestionServices.get({
             input: data,
@@ -149,7 +154,7 @@ define(function(require) {
               propertyValue: data
             };
             if (suggestionResult.data.indexOf(data) < 0) {
-              var modalInstance = $modal.open({
+              var modalInstance = $uibModal.open({
                 templateUrl: 'propertySuggestionModal.html',
                 controller: PropertySuggestionModalCtrl,
                 scope: $scope
@@ -177,7 +182,6 @@ define(function(require) {
       };
 
       $scope.saveUnit = function(unit) {
-        $scope.definitionObject.uiUnit = unit;
         if (_.defined($scope.definitionObject.uiValue)) {
           var savePromise = $scope.propertySave($scope.definitionObject.uiValue, unit);
           if (_.defined(savePromise)) {
@@ -188,6 +192,7 @@ define(function(require) {
             });
           }
         }
+        $scope.definitionObject.uiUnit = unit;
       };
 
       $scope.saveReset = function(resetValue) {
@@ -237,6 +242,28 @@ define(function(require) {
         $scope.initScope();
       };
 
+      var getPropValueDisplay = function($scope, propertyValue) {
+        if (propertyValue.hasOwnProperty('value')) {
+          // Here handle scalar value
+          return propertyValue.value;
+        } else if (propertyValue.hasOwnProperty('function') && propertyValue.hasOwnProperty('parameters') && propertyValue.parameters.length > 0) {
+          // And here a function (get_input / get_property)
+          $scope.editable = false;
+          return propertyValue.function + ': ' + _(propertyValue.parameters).toString();
+        } else if (propertyValue.hasOwnProperty('function_concat') && propertyValue.hasOwnProperty('parameters') && propertyValue.parameters.length > 0) {
+          // And here a concat
+          $scope.editable = false;
+          var concatStr = 'concat: [ ';
+          for(var i=0; i < propertyValue.parameters.length; i++) {
+            if(i > 0) {
+              concatStr += ', ';
+            }
+            concatStr += getPropValueDisplay($scope, propertyValue.parameters[i]);
+          }
+          return  concatStr + ' ]';
+        }
+      };
+
       $scope.initScope = function() {
         // Define properties
         if (!_.defined($scope.definition)) {
@@ -246,14 +273,7 @@ define(function(require) {
         // Now a property is an AbstractPropertyValue : (Scalar or Function)
         var shownValue = $scope.propertyValue;
         if (_.defined($scope.propertyValue) && $scope.propertyValue.definition === false) {
-          if ($scope.propertyValue.hasOwnProperty('value')) {
-            // Here handle scalar value
-            shownValue = $scope.propertyValue.value;
-          } else if ($scope.propertyValue.hasOwnProperty('function') && $scope.propertyValue.hasOwnProperty('parameters') && $scope.propertyValue.parameters.length > 0) {
-            shownValue = $scope.propertyValue.function + ': ' + _($scope.propertyValue.parameters).toString();
-            //should not edit a function
-            $scope.editable = false;
-          }
+          shownValue = getPropValueDisplay($scope, $scope.propertyValue);
         }
 
         // handling default value
@@ -263,10 +283,10 @@ define(function(require) {
         // merge the constraints from the definition and from the type
         var constraints = [];
         if (_.defined($scope.definition.constraints)) {
-          constraints.push($scope.definition.constraints);
+          constraints = $scope.definition.constraints;
         }
         if (_.defined($scope.propertyType) && _.defined($scope.propertyType.constraints)) {
-          constraints.push($scope.propertyType.constraints);
+          _.concat(constraints, $scope.propertyType.constraints);
         }
 
         // Second phase : regarding constraints
@@ -274,11 +294,12 @@ define(function(require) {
           if (constraints[i].hasOwnProperty('validValues')) {
             $scope.definitionObject.uiName = 'select';
             $scope.definitionObject.uiValue = shownValue;
+            $scope.definitionObject.uiSelectValue = shownValue;
             $scope.definitionObject.uiSelectValues = constraints[i].validValues;
             return $scope.definitionObject;
           }
           if (constraints[i].hasOwnProperty('inRange')) {
-            $scope.definitionObject.uiName = 'range';
+            $scope.definitionObject.uiName = 'string';
             $scope.definitionObject.uiValue = shownValue;
             $scope.definitionObject.uiValueMax = constraints[i].rangeMaxValue;
             $scope.definitionObject.uiValueMin = constraints[i].rangeMinValue;
@@ -326,7 +347,7 @@ define(function(require) {
             break;
           case 'timestamp':
             $scope.definitionObject.uiName = 'date';
-            $scope.definitionObject.uiValue = shownValue;
+            $scope.definitionObject.uiValue = _.defined(shownValue) && !_.isDate(shownValue)? new Date(shownValue) : shownValue;
             break;
           case 'scalar-unit.size':
             $scope.definitionObject.uiName = 'scalar-unit';
@@ -368,7 +389,7 @@ define(function(require) {
       };
 
       $scope.openComplexPropertyModal = function() {
-        $modal.open({
+        $uibModal.open({
           templateUrl: 'views/common/property_display_complex_modal.html',
           controller: ComplexPropertyModalCtrl,
           windowClass: 'searchModal',
@@ -379,13 +400,36 @@ define(function(require) {
       /** Reset the property to the default value if any */
       $scope.resetProperty = function resetPropertyToDefault() {
         $scope.initScope();
-        $scope.saveReset($scope.definition.default.value);
-        if ($scope.propertyValue.hasOwnProperty('value')) {
-          $scope.propertyValue.value = $scope.definition.default.value; // if same value affected, no watch applied
+        var defaultValue = null;
+        if(_.has($scope.definition, 'default.value')){
+          defaultValue = $scope.definition.default.value;
+        }else{
+          defaultValue = _.get($scope.definition, 'default');
+        }
+        $scope.saveReset(defaultValue);
+        $scope.editable = true;
+
+        if (_.has($scope.propertyValue, 'value')) {
+          $scope.propertyValue.value = defaultValue; // if same value affected, no watch applied
         } else {
-          $scope.propertyValue = $scope.definition.default;
+          $scope.propertyValue = defaultValue;
         }
       };
+
+      /*
+      * Add an event listener to reset the property value
+      */
+      $scope.$on('reset-property', function(event, object) {
+        var propertyName = event.currentScope.propertyName;
+        var capabilityName = event.currentScope.capabilityName;
+        var relationshipName = event.currentScope.relationshipName;
+
+        if (propertyName === object.propertyName && capabilityName === object.capabilityName && relationshipName === object.relationshipName) {
+          // Trigger the reset
+          event.currentScope.resetProperty();
+        }
+
+      });
 
       // Init managed property
       $scope.init();

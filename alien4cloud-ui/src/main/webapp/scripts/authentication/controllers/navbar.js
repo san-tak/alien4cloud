@@ -2,6 +2,7 @@ define(function (require) {
   'use strict';
 
   var modules = require('modules');
+
   require('scripts/authentication/services/quicksearch');
   require('scripts/common/services/hopscotch_service');
   require('angular-translate');
@@ -11,12 +12,14 @@ define(function (require) {
   require('scripts/authentication/directives/navbar');
   require('scripts/authentication/services/authservices');
 
+
   modules.get('a4c-auth', ['pascalprecht.translate', 'ng-hopscotch']).controller('alienNavBarCtrl',
     ['$rootScope', '$scope', 'authService', 'quickSearchServices', '$translate', 'hopscotchService', '$http',
     function($rootScope, $scope, authService, quickSearchServices, $translate, hopscotchService, $http) {
+      $scope.isCollapsed = true;
       $scope.login = {};
       $scope.signIn = function() {
-        var data = 'username=' + $scope.login.username + '&password=' + $scope.login.password + '&submit=Login';
+        var data = 'username=' + encodeURIComponent($scope.login.username) + '&password=' + encodeURIComponent($scope.login.password) + '&submit=Login';
         authService.logIn(data, $scope);
       };
 
@@ -45,6 +48,10 @@ define(function (require) {
       };
 
       authService.getStatus();
+
+      $http.get('/rest/latest/configuration/supportedLanguages').then(function(result) {
+        $scope.supportedLanguages = result.data.data;
+      });
 
       /* i18n */
       $scope.changeLanguage = function(langKey) {

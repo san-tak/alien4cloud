@@ -10,13 +10,16 @@ import java.util.List;
 
 import javax.annotation.Resource;
 
+import alien4cloud.dao.model.FetchContext;
 import lombok.extern.slf4j.Slf4j;
 
 import org.elasticsearch.action.get.GetResponse;
+import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.mapping.MappingBuilder;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
@@ -26,10 +29,10 @@ import alien4cloud.dao.model.GetMultipleDataResult;
 import alien4cloud.exception.IndexingServiceException;
 import alien4cloud.model.application.Application;
 import alien4cloud.model.common.Tag;
-import alien4cloud.model.components.IndexedArtifactType;
-import alien4cloud.model.components.IndexedCapabilityType;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.components.IndexedRelationshipType;
+import org.alien4cloud.tosca.model.types.ArtifactType;
+import org.alien4cloud.tosca.model.types.CapabilityType;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.model.types.RelationshipType;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -43,29 +46,29 @@ import com.google.common.collect.Lists;
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration("classpath:application-context-test.xml")
 @Slf4j
+@DirtiesContext
 public class EsDaoSuggestionTest extends AbstractDAOTest {
     private static final String APPLICATION_INDEX = Application.class.getSimpleName().toLowerCase();
-    private static final String FETCH_CONTEXT = "tag_suggestion";
     private static final String TAG_NAME_PATH = "tags.name";
     private final ObjectMapper jsonMapper = new ObjectMapper();
 
     @Resource(name = "alien-es-dao")
     IGenericSearchDAO dao;
 
-    List<IndexedNodeType> dataTest = new ArrayList<>();
+    List<NodeType> dataTest = new ArrayList<>();
 
-    IndexedNodeType indexedNodeTypeTest = null;
-    IndexedNodeType indexedNodeTypeTest2 = null;
-    IndexedNodeType indexedNodeTypeTest3 = null;
-    IndexedNodeType indexedNodeTypeTest4 = null;
+    NodeType indexedNodeTypeTest = null;
+    NodeType indexedNodeTypeTest2 = null;
+    NodeType indexedNodeTypeTest3 = null;
+    NodeType indexedNodeTypeTest4 = null;
 
     private List<Tag> Tags1 = Lists.newArrayList(new Tag("icon", "my-icon.png"), new Tag("potatoe", "patate"), new Tag("potatoe_version", "version de patate"));
 
-    private List<Tag> Tags2 = Lists.newArrayList(new Tag("icon", "my-icon.png"), new Tag("version", "My free tag with my free content (tag-0)"), new Tag(
-            "version_1", "Tag2 content"));
+    private List<Tag> Tags2 = Lists.newArrayList(new Tag("icon", "my-icon.png"), new Tag("version", "My free tag with my free content (tag-0)"),
+            new Tag("version_1", "Tag2 content"));
 
-    private List<Tag> Tags3 = Lists.newArrayList(new Tag("icon", "my-icon.png"), new Tag("version", "My free tag with my free content (tag-0)"), new Tag(
-            "version_1", "Tag2 content"), new Tag("potatoe", "patate"), new Tag("potatoe_version", "de patate"));
+    private List<Tag> Tags3 = Lists.newArrayList(new Tag("icon", "my-icon.png"), new Tag("version", "My free tag with my free content (tag-0)"),
+            new Tag("version_1", "Tag2 content"), new Tag("potatoe", "patate"), new Tag("potatoe_version", "de patate"));
 
     @Before
     public void before() throws Exception {
@@ -77,16 +80,16 @@ public class EsDaoSuggestionTest extends AbstractDAOTest {
     @Test
     public void simpleSearchTest() throws IndexingServiceException, InterruptedException, IOException {
         String searchText = "ver";
-        GetMultipleDataResult searchResp = dao.suggestSearch(new String[] { APPLICATION_INDEX, ElasticSearchDAO.TOSCA_ELEMENT_INDEX }, new Class<?>[] {
-                Application.class, IndexedNodeType.class, IndexedArtifactType.class, IndexedCapabilityType.class, IndexedRelationshipType.class },
-                TAG_NAME_PATH, searchText, FETCH_CONTEXT, 0, 10);
-        System.out.println(searchResp.getData().length);
+        GetMultipleDataResult searchResp = dao.suggestSearch(new String[] { APPLICATION_INDEX, ElasticSearchDAO.TOSCA_ELEMENT_INDEX },
+                new Class<?>[] { Application.class, NodeType.class, ArtifactType.class, CapabilityType.class, RelationshipType.class }, TAG_NAME_PATH,
+                searchText, FetchContext.TAG_SUGGESTION, 0, 10);
+
         assertNotNull(searchResp);
         assertNotNull(searchResp.getTypes());
         assertNotNull(searchResp.getData());
         assertEquals(2, searchResp.getTypes().length);
         assertEquals(2, searchResp.getData().length);
-        assertElementIn("indexednodetype", searchResp.getTypes());
+        assertElementIn("nodetype", searchResp.getTypes());
     }
 
     private void assertElementIn(Object element, Object[] elements) {
@@ -108,7 +111,7 @@ public class EsDaoSuggestionTest extends AbstractDAOTest {
     }
 
     private void saveDataToES(boolean refresh) throws JsonProcessingException {
-        for (IndexedNodeType datum : dataTest) {
+        for (NodeType datum : dataTest) {
             String json = jsonMapper.writeValueAsString(datum);
             String typeName = MappingBuilder.indexTypeFromClass(datum.getClass());
             nodeClient.prepareIndex(ElasticSearchDAO.TOSCA_ELEMENT_INDEX, typeName).setSource(json).setRefresh(refresh).execute().actionGet();

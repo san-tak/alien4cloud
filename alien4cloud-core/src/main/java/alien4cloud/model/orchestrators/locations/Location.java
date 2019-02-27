@@ -3,32 +3,27 @@ package alien4cloud.model.orchestrators.locations;
 import static alien4cloud.dao.model.FetchContext.SUMMARY;
 
 import java.util.Date;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import lombok.Getter;
-import lombok.Setter;
-
-import org.elasticsearch.annotation.ESObject;
-import org.elasticsearch.annotation.Id;
-import org.elasticsearch.annotation.NestedObject;
-import org.elasticsearch.annotation.StringField;
+import org.alien4cloud.tosca.model.CSARDependency;
+import org.elasticsearch.annotation.*;
 import org.elasticsearch.annotation.query.FetchContext;
 import org.elasticsearch.annotation.query.TermFilter;
 import org.elasticsearch.mapping.IndexType;
 import org.hibernate.validator.constraints.NotBlank;
 
-import alien4cloud.model.common.IMetaProperties;
-import alien4cloud.model.components.CSARDependency;
-import alien4cloud.security.ISecuredResource;
-import alien4cloud.security.model.DeployerRole;
-import alien4cloud.utils.jackson.*;
-
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.google.common.collect.Sets;
+
+import alien4cloud.model.common.IDatableResource;
+import alien4cloud.model.common.IMetaProperties;
+import alien4cloud.model.secret.SecretProviderConfiguration;
+import alien4cloud.security.AbstractSecurityEnabledResource;
 import io.swagger.annotations.ApiModel;
+import lombok.Getter;
+import lombok.Setter;
 
 @Getter
 @Setter
@@ -36,7 +31,7 @@ import io.swagger.annotations.ApiModel;
 @ESObject
 @ApiModel(value = "Location", description = "A location represents a cloud, a region of a cloud, a set of machines and resources."
         + "basically any location on which alien will be allowed to perform deployment. Locations are managed by orchestrators.")
-public class Location implements ISecuredResource, IMetaProperties {
+public class Location extends AbstractSecurityEnabledResource implements IMetaProperties, IDatableResource {
     @Id
     @FetchContext(contexts = SUMMARY, include = true)
     private String id;
@@ -60,36 +55,18 @@ public class Location implements ISecuredResource, IMetaProperties {
     /**
      * A Location defines and uses some types, it thus basically have a set of CSARDependency
      */
-    @TermFilter(paths = { "name", "version" })
     @NestedObject(nestedClass = CSARDependency.class)
     private Set<CSARDependency> dependencies = Sets.newHashSet();
 
     @StringField(indexType = IndexType.analyzed, includeInAll = true)
     private Map<String, String> metaProperties;
 
-    @TermFilter(paths = { "key", "value" })
-    @NestedObject(nestedClass = NotAnalyzedTextMapEntry.class)
-    @ConditionalOnAttribute(ConditionalAttributes.ES)
-    @JsonDeserialize(using = JSonMapEntryArrayDeSerializer.class)
-    @JsonSerialize(using = JSonMapEntryArraySerializer.class)
-    @FetchContext(contexts = { SUMMARY }, include = { true })
-    private Map<String, Set<String>> userRoles;
+    private List<LocationModifierReference> modifiers;
 
-    @TermFilter(paths = { "key", "value" })
-    @NestedObject(nestedClass = NotAnalyzedTextMapEntry.class)
-    @ConditionalOnAttribute(ConditionalAttributes.ES)
-    @JsonDeserialize(using = JSonMapEntryArrayDeSerializer.class)
-    @JsonSerialize(using = JSonMapEntryArraySerializer.class)
-    @FetchContext(contexts = { SUMMARY }, include = { true })
-    private Map<String, Set<String>> groupRoles;
+    private Date creationDate;
 
-    @Override
-    public Class<DeployerRole> roleEnum() {
-        return DeployerRole.class;
-    }
-
-    /**
-     * Last modification date for the location. Alien needs this information in order to re-synchronize deployment topology if resources has been changed.
-     */
     private Date lastUpdateDate = new Date();
+
+    @ObjectField(enabled = false)
+    private SecretProviderConfiguration secretProviderConfiguration;
 }

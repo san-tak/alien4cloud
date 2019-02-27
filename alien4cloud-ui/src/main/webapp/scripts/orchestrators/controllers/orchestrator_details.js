@@ -14,7 +14,6 @@ define(function (require) {
   require('scripts/orchestrators/controllers/orchestrator_configuration');
   require('scripts/orchestrators/controllers/orchestrator_locations');
   require('scripts/orchestrators/controllers/orchestrator_deployments');
-  require('scripts/orchestrators/controllers/orchestrator_security');
 
   states.state('admin.orchestrators.details', {
     url: '/details/:id',
@@ -30,14 +29,14 @@ define(function (require) {
         }
       ]
     },
-    templateUrl: 'views/orchestrators/orchestrator_details_layout.html',
-    controller: 'LayoutCtrl'
+    templateUrl: 'views/_ref/layout/vertical_menu_left_layout.html',
+    controller: 'OrchestratorDetailsCtrl'
   });
 
   states.state('admin.orchestrators.details.info', {
     url: '/info',
     templateUrl: 'views/orchestrators/orchestrator_info.html',
-    controller: 'OrchestratorDetailsCtrl',
+    controller: 'OrchestratorDetailsInfoCtrl',
     menu: {
       id: 'menu.orchestrators.info',
       state: 'admin.orchestrators.details.info',
@@ -50,8 +49,36 @@ define(function (require) {
   states.forward('admin.orchestrators.details', 'admin.orchestrators.details.info');
 
   modules.get('a4c-orchestrators').controller('OrchestratorDetailsCtrl',
-    ['$scope', '$modal', '$state', '$translate', 'orchestratorService', 'orchestratorInstanceService', 'orchestrator', 'metapropConfServices', 'globalRestErrorHandler',
-    function($scope, $modal, $state, $translate, orchestratorService, orchestratorInstanceService, orchestrator, metapropConfServices, globalRestErrorHandler) {
+  ['$scope', '$state', '$translate', 'orchestrator', 'breadcrumbsService', 'menu', 'layoutService', 'context',
+  function($scope, $state, $translate, orchestrator, breadcrumbsService, menu, layoutService, context) {
+      breadcrumbsService.putConfig({
+        state: 'admin.orchestrators.details',
+        text: function() {
+          return orchestrator.name;
+        },
+        onClick: function() {
+          $state.go('admin.orchestrators.details', { id: orchestrator.id });
+        }
+      });
+
+      $scope.context = context;
+      layoutService.process(menu);
+      $scope.menu = menu;
+    }
+  ]);
+
+
+  modules.get('a4c-orchestrators').controller('OrchestratorDetailsInfoCtrl',
+    ['$scope', '$state', '$translate', 'orchestratorService', 'orchestratorInstanceService', 'orchestrator', 'metapropConfServices', 'globalRestErrorHandler', 'breadcrumbsService',
+    function($scope, $state, $translate, orchestratorService, orchestratorInstanceService, orchestrator, metapropConfServices, globalRestErrorHandler, breadcrumbsService) {
+
+      breadcrumbsService.putConfig({
+        state: 'admin.orchestrators.details.info',
+        text: function() {
+          return $translate.instant('ORCHESTRATORS.NAV.INFO');
+        }
+      });
+
       $scope.orchestrator = orchestrator;
       $scope.showForceDisable = false;
 
@@ -77,10 +104,16 @@ define(function (require) {
 
       $scope.enable = function() {
         orchestrator.state = 'CONNECTING';
-        orchestratorInstanceService.create({orchestratorId: orchestrator.id}, {},function(){})//do something here
-          .$promise['finally'](function() {
-            $state.reload(); // do something with web-sockets to get notifications on the orchestrator state.
-          });
+        orchestratorInstanceService.create({orchestratorId: orchestrator.id}, {}).$promise
+        .then(result => {
+          if(result.error){
+            globalRestErrorHandler.handle(result);
+            $scope.disable(false);
+          }
+        })
+        .then(anyway => {
+          $state.reload();
+        });
       };
 
       $scope.disable = function(force) {

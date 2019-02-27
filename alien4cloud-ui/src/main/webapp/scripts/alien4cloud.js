@@ -7,13 +7,6 @@ define(function(require) {
   var _ = require('lodash');
   var angular = require('angular');
 
-  require('angular-cookies');
-  require('angular-resource');
-  require('angular-sanitize');
-  require('angular-bootstrap');
-  require('angular-ui-router');
-  require('angular-translate');
-  require('angular-xeditable');
   require('scripts/layout/layout');
 
   var alien4cloud = modules.get('alien4cloud', [
@@ -23,8 +16,17 @@ define(function(require) {
     'ui.bootstrap',
     'ui.router',
     'pascalprecht.translate',
-    'xeditable'
+    'xeditable',
+    'angularMoment'
   ]);
+
+  require(['clipboard'], function(Clipboard) {
+    new Clipboard('.btn-cb', {
+        text: function(trigger) {
+            return trigger.getAttribute("uib-tooltip");
+        }
+    });
+  });
 
   // bootstrap angular js application
   states.state('home', {
@@ -33,7 +35,7 @@ define(function(require) {
     controller: ['$scope', 'authService', 'hopscotchService', '$state', function($scope, authService, hopscotchService, $state) {
       $scope.isAdmin = false;
       var isAdmin = authService.hasRole('ADMIN');
-      if(_.defined(isAdmin.then)) {
+      if (_.defined(isAdmin.then)) {
         authService.hasRole('ADMIN').then(function(result) {
           $scope.isAdmin = result;
         });
@@ -52,37 +54,61 @@ define(function(require) {
   });
 
   require('scripts/common/services/rest_technical_error_interceptor');
+  var templateInjector = require('a4c-templates');
 
-  alien4cloud.startup = function() {
+  alien4cloud.startup = function(configuration) {
+    // Path initialization for ace ide so it find modules after minification
+    var config = window.ace.require('ace/config');
+    config.set('basePath', 'bower_components/ace-builds/src-min-noconflict');
+
     // add requirements to alien4cloud
     modules.link(alien4cloud);
 
-    alien4cloud.config(['$stateProvider', '$urlRouterProvider', '$httpProvider',
-      function($stateProvider, $urlRouterProvider, $httpProvider) {
+    alien4cloud.config(['$stateProvider', '$urlRouterProvider', '$httpProvider', '$locationProvider', '$qProvider',
+      function($stateProvider, $urlRouterProvider, $httpProvider, $locationProvider, $qProvider) {
         $httpProvider.interceptors.push('restTechnicalErrorInterceptor');
         $httpProvider.defaults.headers.common['A4C-Agent'] = 'AngularJS_UI';
         $urlRouterProvider.otherwise('/');
         states.config($stateProvider);
+        $locationProvider.html5Mode(false);
+        $locationProvider.hashPrefix('');
+        $qProvider.errorOnUnhandledRejections(false);
       }
     ]);
 
-    // TODO load more modules
     alien4cloud.config(['$translateProvider',
       function($translateProvider) {
-        $translateProvider.translations({CODE: 'en-us'});
+        var defaultLanguage = configuration.defaultLanguage;
+        var languageFilePrefix = configuration.prefixLanguage;
+
         // Default language to load
-        $translateProvider.preferredLanguage('en-us');
+        $translateProvider.translations({CODE: defaultLanguage});
+        $translateProvider.preferredLanguage(defaultLanguage);
+        $translateProvider.useCookieStorage();
+
+        /*
+        * When running in grunt mode, hashPrefix is set to empty so that we can load translation files as is
+        * On build, translation files are renamed to add a hash as prefix.
+        * So, hashPrefix is change during the build (see main/build/config/execute.js:revrename) from empty to the prefix hash.
+        */
+        // WARNING WARNING WARNING WARNING WARNING WARNING
+        // we use a map as a hack. In fact, the providing of the hash is done after minification.
+        // if we use a simple: var hashPrefix='', the minification process will directly replace hashPrefix in the options.files below with ''
+        // when using a map, it will be replaced by {hashPrefix:''}.hashPrefix, allowing us to set the value as we want in execute:revrename
+        var complexPrefix = {
+          hashPrefix:''
+        };
 
         var options = {
           files: [{
-            prefix: 'data/languages/locale-',
+            prefix: 'data/languages/' + complexPrefix.hashPrefix +  languageFilePrefix + '-',
             suffix: '.json'
           }]
         };
 
         // load translations provided by plugins
-        if(!_.isEmpty(plugins.registeredTranlations)){
-          _.each(plugins.registeredTranlations, function(trans){
+        if (!_.isEmpty(plugins.registeredTranlations)) {
+          _.each(plugins.registeredTranlations, function(trans) {
             options.files.push({
               prefix: trans.prefix,
               suffix: trans.suffix
@@ -92,14 +118,28 @@ define(function(require) {
 
         // Static file loader
         $translateProvider.useStaticFilesLoader(options);
+
       }
     ]);
 
-    alien4cloud.run(['$rootScope', '$state', 'editableOptions', 'editableThemes', 'authService',
-      function($rootScope, $state, editableOptions, editableThemes, authService) {
+    alien4cloud.run(['$templateCache', '$rootScope', '$state', '$sce', 'editableOptions', 'editableThemes', 'authService', 'restTechnicalErrorInterceptor',
+      function($templateCache, $rootScope, $state, $sce, editableOptions, editableThemes, authService, restTechnicalErrorInterceptor) {
+        restTechnicalErrorInterceptor.$state = $state;
+        templateInjector($templateCache);
+        var statusFetched = false; // flag to know if we have fetched current user status (logged in and roles)
+        $rootScope._ = _;
+        $rootScope.dotWb = function(inputStr) {
+          return $sce.trustAsHtml(inputStr.replace(/\./g, '.<wbr>'));
+        };
         // check when the state is about to change
-        $rootScope.$on('$stateChangeStart', function(event, toState) {
+        $rootScope.$on('$stateChangeStart', function(event, toState, toParams) {
+          if (!statusFetched && _.defined(event)) {
+            // we must have the user status before going to a state.
+            event.preventDefault();
+          }
           authService.getStatus().$promise.then(function() {
+            var propagateState = !statusFetched; // if we prevented state change we have to trigger it now that we fetched user status
+            statusFetched = true;
             // check all the menu array & permissions
             authService.menu.forEach(function(menuItem) {
               var menuType = menuItem.id.split('.')[1];
@@ -108,6 +148,10 @@ define(function(require) {
                 $state.go('restricted');
               }
             });
+            if (propagateState) {
+              // This is needed only if we prevented the default state change (so if user status was'nt fetched).
+              $state.go(toState, toParams);
+            }
           });
         });
 
@@ -126,6 +170,7 @@ define(function(require) {
           ' confirm="{{\'CONFIRM_MESSAGE\' | translate}}"' +
           ' confirm-title="{{\'CONFIRM\' | translate }}"' +
           ' confirm-placement="left"' +
+          ' confirm-class="popover"' +
           ' cancel-handler="$form.$cancel()"' +
           ' ng-click="$event.stopPropagation();">' +
           '<span class="fa fa-check"></span>' +

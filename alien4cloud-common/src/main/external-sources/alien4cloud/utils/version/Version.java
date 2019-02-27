@@ -22,25 +22,47 @@ package alien4cloud.utils.version;
 import java.util.StringTokenizer;
 import java.util.regex.Pattern;
 
+import org.elasticsearch.annotation.NumberField;
+import org.elasticsearch.annotation.StringField;
+import org.elasticsearch.annotation.query.TermFilter;
+import org.elasticsearch.mapping.IndexType;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 /**
  * Default implementation of artifact versioning.
  * 
  * @author <a href="mailto:brett@apache.org">Brett Porter</a>
  */
+@Setter
 @NoArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class Version implements Comparable<Version> {
+    @TermFilter
+    @NumberField(index = IndexType.not_analyzed)
     private Integer majorVersion;
 
+    @TermFilter
+    @NumberField(index = IndexType.not_analyzed)
     private Integer minorVersion;
 
+    @TermFilter
+    @NumberField(index = IndexType.not_analyzed)
     private Integer incrementalVersion;
 
+    @TermFilter
+    @NumberField(index = IndexType.not_analyzed)
     private Integer buildNumber;
 
+    @TermFilter
+    @StringField(indexType = IndexType.not_analyzed)
     private String qualifier;
 
+    @JsonIgnore
     private ComparableVersion comparable;
 
     public Version(String version) {
@@ -73,20 +95,20 @@ public class Version implements Comparable<Version> {
         }
     }
 
-    public int getMajorVersion() {
-        return majorVersion != null ? majorVersion : 0;
+    public Integer getMajorVersion() {
+        return majorVersion != null ? majorVersion : Integer.valueOf(0);
     }
 
-    public int getMinorVersion() {
-        return minorVersion != null ? minorVersion : 0;
+    public Integer getMinorVersion() {
+        return minorVersion != null ? minorVersion : Integer.valueOf(0);
     }
 
-    public int getIncrementalVersion() {
-        return incrementalVersion != null ? incrementalVersion : 0;
+    public Integer getIncrementalVersion() {
+        return incrementalVersion != null ? incrementalVersion : Integer.valueOf(0);
     }
 
-    public int getBuildNumber() {
-        return buildNumber != null ? buildNumber : 0;
+    public Integer getBuildNumber() {
+        return buildNumber != null ? buildNumber : Integer.valueOf(0);
     }
 
     public String getQualifier() {
@@ -174,6 +196,9 @@ public class Version implements Comparable<Version> {
 
     @Override
     public String toString() {
-        return comparable.toString();
+        if (qualifier == null) {
+            return getMajorVersion() + "." + getMinorVersion() + "." + getIncrementalVersion() + "-" + getBuildNumber();
+        }
+        return getMajorVersion() + "." + getMinorVersion() + "." + getIncrementalVersion() + "-" + getBuildNumber() + "-" + getQualifier();
     }
 }

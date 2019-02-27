@@ -22,13 +22,25 @@ define(function (require) {
   });
 
   modules.get('a4c-orchestrators').controller('OrchestratorConfigurationCtrl',
-    ['$scope', '$http', '$translate', '$q', 'orchestrator', 'orchestratorConfigurationService', 'orchestratorService',
-    function($scope, $http, $translate, $q, orchestrator, orchestratorConfigurationService, orchestratorService) {
+    ['$scope', '$http', '$translate', '$q', 'orchestrator', 'orchestratorConfigurationService', 'orchestratorService', 'breadcrumbsService',
+    function($scope, $http, $translate, $q, orchestrator, orchestratorConfigurationService, orchestratorService, breadcrumbsService) {
+      
+      breadcrumbsService.putConfig({
+        state: 'admin.orchestrators.details.configuration',
+        text: function() {
+          return $translate.instant('ORCHESTRATORS.NAV.CONFIGURATION');
+        }
+      });
+
       $scope.orchestrator = orchestrator;
       $scope.lock = true;
 
       $scope.toggleLock = function() {
         $scope.lock = ($scope.lock) ? false : true;
+      };
+
+      $scope.disableUnlock = function() {
+        return orchestrator.state !== 'CONNECTED' || !$scope.lock;
       };
 
       orchestratorConfigurationService.get({orchestratorId: orchestrator.id},
@@ -40,14 +52,24 @@ define(function (require) {
       );
 
       // get the configuration for the orchestrator.
-      $http.get('rest/latest/formdescriptor/orchestratorConfig/' + orchestrator.id).success(function(result) {
-        $scope.configurationDefinition = result.data;
+      $http.get('rest/latest/formdescriptor/orchestratorConfig/' + orchestrator.id).then(function(result) {
+        $scope.configurationDefinition = result.data.data;
       });
+
+      // if a key of configuration object is remove from scope by generic form, we re-add this key with a null value
+      var formatNewConfiguration = function(newConfiguration) {
+        for (var property in $scope.configurationDefinition._propertyType) {
+          if (_.undefined(newConfiguration[property])) {
+            newConfiguration[property] = null;
+          }
+        }
+      };
 
       $scope.saveConfiguration = function(newConfiguration) {
         if (orchestrator.state === 'CONNECTED') {
           $scope.toggleLock();
         }
+        formatNewConfiguration(newConfiguration);
         return orchestratorConfigurationService.update({
           orchestratorId: orchestrator.id
         }, angular.toJson(newConfiguration), function success(response) {

@@ -1,48 +1,39 @@
 package alien4cloud.configuration;
 
-import java.io.BufferedOutputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.List;
-import java.util.Properties;
 import java.util.Set;
 
 import javax.annotation.PostConstruct;
-import javax.annotation.Resource;
 import javax.inject.Inject;
 
-import alien4cloud.exception.AlreadyExistException;
-import alien4cloud.model.components.CSARSource;
-import alien4cloud.plugin.PluginManager;
-import alien4cloud.plugin.exception.MissingPlugingDescriptorFileException;
-import alien4cloud.plugin.exception.PluginLoadingException;
-import alien4cloud.security.AuthorizationUtil;
-import alien4cloud.security.model.Role;
-import alien4cloud.security.model.User;
-import alien4cloud.tosca.context.ToscaContextInjector;
-import com.google.common.collect.Sets;
-import lombok.extern.slf4j.Slf4j;
-
+import org.alien4cloud.tosca.catalog.ArchiveUploadService;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.context.SecurityContextImpl;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StreamUtils;
 
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.component.repository.CsarFileRepository;
-import alien4cloud.component.repository.exception.CSARVersionAlreadyExistsException;
-import alien4cloud.dao.IGenericSearchDAO;
-import alien4cloud.tosca.ArchiveUploadService;
+import com.google.common.collect.Sets;
+
+import alien4cloud.component.repository.exception.CSARUsedInActiveDeployment;
+import alien4cloud.component.repository.exception.ToscaTypeAlreadyDefinedInOtherCSAR;
+import alien4cloud.exception.AlreadyExistException;
+import alien4cloud.model.components.CSARSource;
+import alien4cloud.plugin.PluginManager;
+import alien4cloud.plugin.exception.MissingPlugingDescriptorFileException;
+import alien4cloud.plugin.exception.PluginLoadingException;
+import alien4cloud.security.model.Role;
+import alien4cloud.tosca.context.ToscaContextInjector;
 import alien4cloud.tosca.parser.ParsingException;
+import alien4cloud.utils.AlienConstants;
 import alien4cloud.utils.FileUtil;
+import lombok.extern.slf4j.Slf4j;
 
 /** Load archives and plugins at bootstrap to initialize alien 4 cloud repository. */
 @Slf4j
@@ -65,7 +56,7 @@ public class InitialLoader {
     @PostConstruct
     public void initialLoad() throws IOException {
         // Ensure tosca context injector is loaded first.
-        if(toscaContextInjector == null) {
+        if (toscaContextInjector == null) {
             log.error("Tosca Context Injector is required.");
         }
 
@@ -76,7 +67,7 @@ public class InitialLoader {
         }
         Path alienInitDirectoryPath = Paths.get(alienInitDirectory);
         if (!Files.exists(alienInitDirectoryPath)) {
-            log.warn("Specified initial directory <{}> cannot be found - skipping initial loading of archives and plugins.", alienInitDirectoryPath.toString());
+            log.warn("Specified initial directory [ {} ] cannot be found - skipping initial loading of archives and plugins.", alienInitDirectoryPath.toString());
             return;
         }
 
@@ -104,12 +95,18 @@ public class InitialLoader {
             Collections.sort(archives);
             for (Path archive : archives) {
                 try {
-                    log.debug("Initial load of archives from <{}>.", archive.toString());
-                    csarUploadService.upload(archive, CSARSource.ALIEN);
-                } catch (CSARVersionAlreadyExistsException e) {
-                    log.debug("Skipping initial upload of archive <{}>. Archive has already been loaded.", archive.toString(), e);
+                    log.debug("Initial load of archives from [ {} ].", archive.toString());
+                    csarUploadService.upload(archive, CSARSource.ALIEN, AlienConstants.GLOBAL_WORKSPACE_ID);
+                } catch (AlreadyExistException e) {
+                    log.debug("Skipping initial upload of archive [ {} ]. Archive has already been loaded.", archive.toString(), e);
+                } catch (CSARUsedInActiveDeployment e) {
+                    log.debug("Skipping initial upload of archive [ {} ]. Archive is used in an active depoyment, and then cannot be overrided.",
+                            archive.toString(), e);
                 } catch (ParsingException e) {
-                    log.error("Initial upload of archive <{}> has failed.", archive.toString(), e);
+                    log.error("Initial upload of archive [ {} ] has failed.", archive.toString(), e);
+                } catch (ToscaTypeAlreadyDefinedInOtherCSAR e) {
+                    log.debug("Skipping initial upload of archive [ {} ], it's archive contain's a tosca type already defined in an other archive."
+                            + e.getMessage(), archive.toString(), e);
                 }
             }
         } catch (IOException e) {
@@ -121,7 +118,7 @@ public class InitialLoader {
     }
 
     /**
-     * Load plugins from the initialiaztion plugins folder.
+     * Load plugins from the initialization plugins folder.
      */
     public void loadPlugins() {
         if (alienInitDirectory == null || alienInitDirectory.isEmpty() || alienPluginsInitPath == null) {
@@ -136,17 +133,9 @@ public class InitialLoader {
 
         try {
             List<Path> plugins = FileUtil.listFiles(alienPluginsInitPath, ".+\\.(zip)");
-            for (Path plugin : plugins) {
-                try {
-                    pluginManager.uploadPlugin(plugin);
-                } catch (AlreadyExistException e) {
-                    log.debug("Plugin {} has already been uploaded.", plugin.toString());
-                } catch (PluginLoadingException | MissingPlugingDescriptorFileException e) {
-                    log.error("Failed to load plugin from init folder. File {}", plugin.toString(), e);
-                }
-            }
+            pluginManager.uploadInitPlugins(plugins);
         } catch (IOException e) {
-            log.error("Failed to load initial archives", e);
+            log.error("Failed to load initial plugins", e);
         }
     }
 }

@@ -1,7 +1,6 @@
 package alien4cloud.rest.model;
 
-import alien4cloud.Constants;
-import lombok.AllArgsConstructor;
+import alien4cloud.utils.AlienConstants;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -16,12 +15,17 @@ import lombok.ToString;
 @Setter
 @ToString
 @NoArgsConstructor
-@AllArgsConstructor
 public class BasicSearchRequest {
     /* The component type to query */
     private String query;
-    private Integer from;
-    private Integer size;
+    private Integer from = 0;
+    private Integer size = AlienConstants.DEFAULT_ES_SEARCH_SIZE;
+
+    public BasicSearchRequest(String query, Integer from, Integer size) {
+        this.query = query;
+        setFrom(from);
+        setSize(size);
+    }
 
     /**
      * Set the value for 'from': start element in the request.
@@ -43,9 +47,9 @@ public class BasicSearchRequest {
      */
     public void setSize(Integer size) {
         if (size == null) {
-            this.size = Constants.DEFAULT_ES_SEARCH_SIZE;
-        } else if (size > Constants.MAX_ES_SEARCH_SIZE) {
-            this.size = Constants.MAX_ES_SEARCH_SIZE;
+            this.size = AlienConstants.DEFAULT_ES_SEARCH_SIZE;
+        } else if (size > AlienConstants.MAX_ES_SEARCH_SIZE) {
+            this.size = AlienConstants.MAX_ES_SEARCH_SIZE;
         } else {
             this.size = size;
         }

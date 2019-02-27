@@ -3,9 +3,13 @@ package alien4cloud.tosca.container.validation;
 import javax.validation.ConstraintValidator;
 import javax.validation.ConstraintValidatorContext;
 
-import alien4cloud.model.components.PropertyDefinition;
+import org.alien4cloud.tosca.model.definitions.PropertyDefinition;
+import org.alien4cloud.tosca.model.definitions.PropertyValue;
+import org.alien4cloud.tosca.model.definitions.ScalarPropertyValue;
+import org.alien4cloud.tosca.normative.types.IPropertyType;
+import org.alien4cloud.tosca.exceptions.InvalidPropertyValueException;
+import org.alien4cloud.tosca.normative.types.ToscaTypes;
 
-@Deprecated
 public class ToscaPropertyDefaultValueTypeValidator implements ConstraintValidator<ToscaPropertyDefaultValueType, PropertyDefinition> {
 
     @Override
@@ -14,22 +18,25 @@ public class ToscaPropertyDefaultValueTypeValidator implements ConstraintValidat
 
     @Override
     public boolean isValid(PropertyDefinition value, ConstraintValidatorContext context) {
-        // TODO:XDE
-        // String defaultAsString = value.getDefault();
-        // if (defaultAsString == null) {
-        // // no default value is specified.
-        // return true;
-        // }
-        // IPropertyType<?> toscaType = ToscaType.fromYamlTypeName(value.getType());
-        //
-        // if (toscaType == null) {
-        // return false;
-        // }
-        // try {
-        // toscaType.parse(defaultAsString);
-        // } catch (InvalidPropertyValueException e) {
-        // return false;
-        // }
+        PropertyValue defaultValue = value.getDefault();
+        if (defaultValue == null) {
+            // no default value is specified.
+            return true;
+        }
+        if (!(defaultValue instanceof ScalarPropertyValue)) {
+            // No constraint can be made on other thing than scalar values
+            return false;
+        }
+        IPropertyType<?> toscaType = ToscaTypes.fromYamlTypeName(value.getType());
+
+        if (toscaType == null) {
+            return false;
+        }
+        try {
+            toscaType.parse(((ScalarPropertyValue) defaultValue).getValue());
+        } catch (InvalidPropertyValueException e) {
+            return false;
+        }
         return true;
     }
 }

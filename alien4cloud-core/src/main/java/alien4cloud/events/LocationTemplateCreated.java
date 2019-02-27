@@ -1,9 +1,10 @@
 package alien4cloud.events;
 
+import org.alien4cloud.tosca.model.types.AbstractInheritableToscaType;
+
+import alien4cloud.model.orchestrators.locations.AbstractLocationResourceTemplate;
 import lombok.Getter;
 import lombok.Setter;
-import alien4cloud.model.components.IndexedNodeType;
-import alien4cloud.model.orchestrators.locations.LocationResourceTemplate;
 
 /**
  * This event is fired when a location resource template is created (through UI or auto-config feature).
@@ -14,9 +15,9 @@ public class LocationTemplateCreated extends LocationResourceEvent {
 
     private static final long serialVersionUID = 4523559660777770642L;
 
-    private IndexedNodeType nodeType;
+    private AbstractInheritableToscaType toscaType;
 
-    private LocationResourceTemplate template;
+    private AbstractLocationResourceTemplate template;
 
     public LocationTemplateCreated(Object source) {
         super(source);

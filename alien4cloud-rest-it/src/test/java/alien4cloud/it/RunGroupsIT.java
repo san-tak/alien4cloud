@@ -1,6 +1,5 @@
 package alien4cloud.it;
 
-import org.junit.Ignore;
 import org.junit.runner.RunWith;
 
 import cucumber.api.CucumberOptions;
@@ -12,6 +11,6 @@ import cucumber.api.junit.Cucumber;
         "classpath:alien/rest/groups"
         //
 }, format = { "pretty", "html:target/cucumber/groups", "json:target/cucumber/cucumber-groups.json" })
-//@Ignore
+// @Ignore
 public class RunGroupsIT {
 }

@@ -1,14 +1,31 @@
 package alien4cloud.tosca.context;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
+import static alien4cloud.utils.AlienUtils.safe;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Predicate;
+
+import org.alien4cloud.tosca.model.CSARDependency;
+import org.alien4cloud.tosca.model.Csar;
+import org.alien4cloud.tosca.model.types.AbstractToscaType;
+import org.alien4cloud.tosca.model.types.ArtifactType;
+import org.alien4cloud.tosca.model.types.CapabilityType;
+import org.alien4cloud.tosca.model.types.DataType;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.model.types.PolicyType;
+import org.alien4cloud.tosca.model.types.RelationshipType;
+
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 import alien4cloud.component.ICSARRepositorySearchService;
-import alien4cloud.model.components.*;
 import alien4cloud.tosca.model.ArchiveRoot;
+import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
@@ -18,7 +35,8 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class ToscaContext {
     @Setter
-    private static ICSARRepositorySearchService csarSearchService;
+    @Getter
+    private static ICSARRepositorySearchService csarRepositorySearchService;
     private final static ThreadLocal<Context> contextThreadLocal = new ThreadLocal<>();
 
     /**
@@ -29,6 +47,15 @@ public class ToscaContext {
      */
     public static void init(final Set<CSARDependency> dependencies) {
         contextThreadLocal.set(new Context(dependencies));
+    }
+
+    /**
+     * Set an existing tosca context.
+     * 
+     * @param context The context to set.
+     */
+    public static void set(Context context) {
+        contextThreadLocal.set(context);
     }
 
     /**
@@ -48,7 +75,7 @@ public class ToscaContext {
      * @param <T> The type of element.
      * @return The requested element.
      */
-    public static <T extends IndexedToscaElement> T get(Class<T> elementClass, String elementId) {
+    public static <T extends AbstractToscaType> T get(Class<T> elementClass, String elementId) {
         return contextThreadLocal.get().getElement(elementClass, elementId, false);
     }
 
@@ -60,7 +87,7 @@ public class ToscaContext {
      * @param <T> The type of element.
      * @return The requested element.
      */
-    public static <T extends IndexedToscaElement> T getOrFail(Class<T> elementClass, String elementId) {
+    public static <T extends AbstractToscaType> T getOrFail(Class<T> elementClass, String elementId) {
         return contextThreadLocal.get().getElement(elementClass, elementId, true);
     }
 
@@ -75,15 +102,50 @@ public class ToscaContext {
      * Tosca context allows to cache TOSCA elements
      */
     public static class Context {
+
+        @Getter
         /** Current context dependencies. */
         private final Set<CSARDependency> dependencies;
         /** Context archives. */
         private final Map<String, Csar> archivesMap = Maps.newHashMap();
-        /** Cached types in the context. */
-        private final Map<String, Map<String, IndexedToscaElement>> toscaTypesCache = Maps.newHashMap();
+        /** Cached types in the context. <ElementType, <ElementId, Element>> */
+        private final Map<String, Map<String, AbstractToscaType>> toscaTypesCache = Maps.newHashMap();
 
-        private Context(Set<CSARDependency> dependencies) {
+        public Context(Set<CSARDependency> dependencies) {
             this.dependencies = dependencies;
+        }
+
+        private CSARDependency getDependencyByName(String dependencyName) {
+            for (CSARDependency d : dependencies) {
+                if (d.getName().equals(dependencyName)) {
+                    return d;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Update the ToscaContext to take in account the new dependencies.
+         *
+         * @param newDependencies The new list of dependencies for this context.
+         */
+        public void resetDependencies(Set<CSARDependency> newDependencies) {
+            Map<String, CSARDependency> dependenciesByName = Maps.newHashMap();
+            for (CSARDependency dependency : dependencies) {
+                dependenciesByName.put(dependency.getName(), dependency);
+            }
+            // now add/ update /remove dependencies to match the new dependencies.
+            for (CSARDependency dependency : newDependencies) {
+                CSARDependency previous = dependenciesByName.remove(dependency.getName());
+                if (previous == null) {
+                    addDependency(dependency);
+                } else if (!previous.getVersion().equals(dependency.getVersion())) {
+                    updateDependency(dependency);
+                }
+            }
+            for (CSARDependency dependency : dependenciesByName.values()) {
+                removeDependency(dependency);
+            }
         }
 
         /**
@@ -93,7 +155,69 @@ public class ToscaContext {
          */
         public void addDependency(CSARDependency dependency) {
             log.debug("Add dependency to context", dependency);
+            if (dependency.getHash() == null) {
+                // we should try to get the hash from the repository
+                Csar csar = getArchive(dependency.getName(), dependency.getVersion());
+                dependency.setHash(csar.getHash());
+            }
             dependencies.add(dependency);
+        }
+
+        /**
+         * Remove a given dependency from the TOSCA Context by name.
+         *
+         * @param removedDependency The dependency to remove.
+         */
+        public void removeDependency(CSARDependency removedDependency) {
+            CSARDependency existingDependency = getDependencyByName(removedDependency.getName());
+            if (existingDependency != null) {
+                dependencies.remove(existingDependency);
+                List<String> toRemove = Lists.newArrayList();
+                // unload all types from this dependency
+                for (Map<String, AbstractToscaType> elementMap : toscaTypesCache.values()) {
+                    for (Map.Entry<String, AbstractToscaType> entry : elementMap.entrySet()) {
+                        if (entry.getValue().getArchiveName().equals(existingDependency.getName())
+                                && entry.getValue().getArchiveVersion().equals(existingDependency.getVersion())) {
+                            toRemove.add(entry.getKey());
+                        }
+                    }
+                    for (String removeId : toRemove) {
+                        elementMap.remove(removeId);
+                    }
+                    toRemove.clear();
+                }
+
+                // alse clean the archive cache
+                Csar csar = new Csar(removedDependency.getName(), removedDependency.getVersion());
+                archivesMap.remove(csar.getId());
+                log.debug("Removed dependency {} from the TOSCA context.", removedDependency);
+            } else {
+                log.debug("Cannot remove dependency {} from the TOSCA context as it wasn't found in the dependencies.", removedDependency);
+            }
+        }
+
+        /**
+         * Performs an add or update of a dependency in a TOSCA context.
+         *
+         * @param dependency The updated dependency.
+         */
+        public void updateDependency(CSARDependency dependency) {
+            // Do not update dependency if the version hasn't changed
+            if (hasDependency(dependency)) {
+                log.debug("Dependency already exist in context.");
+                return;
+            }
+            removeDependency(dependency);
+            addDependency(dependency);
+        }
+
+        private boolean hasDependency(CSARDependency dependency) {
+            for (CSARDependency existDependency : this.dependencies) {
+                if (existDependency.getName().equals(dependency.getName())) {
+                    return existDependency.getVersion().equals(dependency.getVersion()) && Objects.equals(existDependency.getHash(), dependency.getHash());
+                }
+            }
+            return false;
         }
 
         /**
@@ -104,21 +228,22 @@ public class ToscaContext {
         public void register(ArchiveRoot root) {
             log.debug("Register archive {}", root);
             archivesMap.put(root.getArchive().getId(), root.getArchive());
-            register(IndexedArtifactType.class, root.getArtifactTypes());
-            register(IndexedCapabilityType.class, root.getCapabilityTypes());
-            register(IndexedDataType.class, root.getDataTypes());
-            register(IndexedNodeType.class, root.getNodeTypes());
-            register(IndexedRelationshipType.class, root.getRelationshipTypes());
+            register(ArtifactType.class, root.getArtifactTypes());
+            register(CapabilityType.class, root.getCapabilityTypes());
+            register(DataType.class, root.getDataTypes());
+            register(NodeType.class, root.getNodeTypes());
+            register(RelationshipType.class, root.getRelationshipTypes());
+            register(PolicyType.class, root.getPolicyTypes());
         }
 
-        private <T extends IndexedToscaElement> void register(Class<T> elementClass, Map<String, T> elementMap) {
+        private <T extends AbstractToscaType> void register(Class<T> elementClass, Map<String, T> elementMap) {
             String elementType = elementClass.getSimpleName();
-            Map<String, IndexedToscaElement> typeElements = toscaTypesCache.get(elementType);
+            Map<String, AbstractToscaType> typeElements = toscaTypesCache.get(elementType);
             if (typeElements == null) {
                 typeElements = new HashMap<>();
                 toscaTypesCache.put(elementType, typeElements);
             }
-            if(elementMap == null) {
+            if (elementMap == null) {
                 return;
             }
             typeElements.putAll(elementMap);
@@ -134,10 +259,10 @@ public class ToscaContext {
         public Csar getArchive(String name, String version) {
             String id = new Csar(name, version).getId();
             Csar archive = archivesMap.get(id);
-            log.debug("get archive from map {} {}", id, archive);
+            log.debug("get archive from map {} {} {}", id, archive);
             if (archive == null) {
-                archive = csarSearchService.getArchive(id);
-                log.debug("get archive from repo {} {} {}", id, archive, csarSearchService.getClass().getName());
+                archive = csarRepositorySearchService.getArchive(name, version);
+                log.debug("get archive from repo {} {} {}", id, archive, csarRepositorySearchService.getClass().getName());
                 archivesMap.put(id, archive);
             }
             return archive;
@@ -151,9 +276,9 @@ public class ToscaContext {
          * @param <T> The type of element.
          * @return The requested element.
          */
-        public <T extends IndexedToscaElement> T getElement(Class<T> elementClass, String elementId, boolean required) {
+        public <T extends AbstractToscaType> T getElement(Class<T> elementClass, String elementId, boolean required) {
             String elementType = elementClass.getSimpleName();
-            Map<String, IndexedToscaElement> typeElements = toscaTypesCache.get(elementType);
+            Map<String, AbstractToscaType> typeElements = toscaTypesCache.get(elementType);
             if (typeElements == null) {
                 typeElements = new HashMap<>();
                 toscaTypesCache.put(elementType, typeElements);
@@ -165,11 +290,19 @@ public class ToscaContext {
                 }
             }
 
-            T element = required ? csarSearchService.getRequiredElementInDependencies(elementClass, elementId, dependencies)
-                    : csarSearchService.getElementInDependencies(elementClass, elementId, dependencies);
-            typeElements.put(elementId, element);
+            T element = required ? csarRepositorySearchService.getRequiredElementInDependencies(elementClass, elementId, dependencies)
+                    : csarRepositorySearchService.getElementInDependencies(elementClass, elementId, dependencies);
+            if (element != null) {
+                typeElements.put(elementId, element);
+            }
             log.debug("Retrieve element {} {}", element, dependencies);
             return element;
+        }
+
+        public <T extends AbstractToscaType> Optional<AbstractToscaType> getElement(Class<T> elementClass, Predicate<AbstractToscaType> filter) {
+            String elementType = elementClass.getSimpleName();
+            Map<String, AbstractToscaType> typeElements = toscaTypesCache.get(elementType);
+            return safe(typeElements).values().stream().filter(filter).findFirst();
         }
     }
 }

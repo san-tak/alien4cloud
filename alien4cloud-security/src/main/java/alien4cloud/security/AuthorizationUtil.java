@@ -1,30 +1,35 @@
 package alien4cloud.security;
 
-import alien4cloud.Constants;
-import alien4cloud.security.groups.IAlienGroupDao;
-import alien4cloud.security.model.ApplicationEnvironmentRole;
-import alien4cloud.security.model.ApplicationRole;
-import alien4cloud.security.model.CloudRole;
-import alien4cloud.security.model.Group;
-import alien4cloud.security.model.Role;
-import alien4cloud.security.model.User;
-import alien4cloud.security.spring.Alien4CloudAccessDeniedHandler;
-import alien4cloud.security.spring.FailureAuthenticationEntryPoint;
-import com.google.common.collect.Sets;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import lombok.extern.slf4j.Slf4j;
+
 import org.elasticsearch.index.query.FilterBuilder;
 import org.elasticsearch.index.query.FilterBuilders;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.LogoutConfigurer;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.authentication.logout.LogoutSuccessHandler;
 import org.springframework.stereotype.Component;
+
+import com.google.common.collect.Sets;
+
+import alien4cloud.security.groups.IAlienGroupDao;
+import alien4cloud.security.model.ApplicationEnvironmentRole;
+import alien4cloud.security.model.ApplicationRole;
+import alien4cloud.security.model.Group;
+import alien4cloud.security.model.Role;
+import alien4cloud.security.model.User;
+import alien4cloud.security.spring.Alien4CloudAccessDeniedHandler;
+import alien4cloud.security.spring.FailureAuthenticationEntryPoint;
+import alien4cloud.utils.AlienConstants;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Applications and topologies concerns
@@ -63,28 +68,17 @@ public final class AuthorizationUtil {
     }
 
     /**
-     * Check that the user has one of the requested rights for the given cloud
-     *
-     * @param resource
-     * @param expectedRoles
-     */
-    public static void checkAuthorizationForLocation(ISecuredResource resource, IResourceRoles... expectedRoles) {
-        if (!hasAuthorizationForLocation(resource, expectedRoles)) {
-            throw new AccessDeniedException("user <" + SecurityContextHolder.getContext().getAuthentication().getName()
-                    + "> has no authorization to perform the requested operation on this cloud.");
-        }
-    }
-
-    /**
      * Check that the user has one of the requested rights for the given application environment
+     * The APPLICATION_MANAGER and DEPLOYMENT_MANAGER are gods of the environment
      *
+     * @param application
      * @param resource
      * @param expectedRoles
      */
-    public static void checkAuthorizationForEnvironment(ISecuredResource resource, IResourceRoles... expectedRoles) {
-        if (!hasAuthorizationForEnvironment(resource, expectedRoles)) {
+    public static void checkAuthorizationForEnvironment(ISecuredResource application, ISecuredResource resource, IResourceRoles... expectedRoles) {
+        if (!hasAuthorizationForEnvironment(application, resource, expectedRoles)) {
             throw new AccessDeniedException("user <" + SecurityContextHolder.getContext().getAuthentication().getName()
-                    + "> has no authorization to perform the requested operation on this cloud.");
+                    + "> has no authorization to perform the requested operation on this environment.");
         }
     }
 
@@ -92,12 +86,9 @@ public final class AuthorizationUtil {
         return hasAuthorization(getCurrentUser(), resource, ApplicationRole.APPLICATION_MANAGER, expectedRoles);
     }
 
-    public static boolean hasAuthorizationForLocation(ISecuredResource resource, IResourceRoles... expectedRoles) {
-        return hasAuthorization(getCurrentUser(), resource, CloudRole.CLOUD_DEPLOYER, expectedRoles);
-    }
-
-    public static boolean hasAuthorizationForEnvironment(ISecuredResource resource, IResourceRoles... expectedRoles) {
-        return hasAuthorization(getCurrentUser(), resource, ApplicationEnvironmentRole.DEPLOYMENT_MANAGER, expectedRoles);
+    public static boolean hasAuthorizationForEnvironment(ISecuredResource application, ISecuredResource resource, IResourceRoles... expectedRoles) {
+        return hasAuthorizationForApplication(application)
+                || hasAuthorization(getCurrentUser(), resource, ApplicationEnvironmentRole.DEPLOYMENT_MANAGER, expectedRoles);
     }
 
     /**
@@ -107,7 +98,9 @@ public final class AuthorizationUtil {
      */
     public static void checkHasOneRoleIn(Role... expectedRoles) {
         final Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        checkHasOneRoleIn(auth, expectedRoles);
+        if (auth != null) {
+            checkHasOneRoleIn(auth, expectedRoles);
+        }
     }
 
     /**
@@ -196,6 +189,27 @@ public final class AuthorizationUtil {
             return (User) auth.getPrincipal();
         }
         return null;
+    }
+
+    /**
+     * Get user's groups
+     * 
+     * @param user the user to get groups
+     * @return all user's groups (group all included)
+     */
+    public static Set<String> getUserGroups(User user) {
+        if (user == null) {
+            return null;
+        }
+        Set<String> groups = user.getGroups();
+        if (groups == null) {
+            groups = new HashSet<>();
+        }
+        Group allUserGroup = getAllUsersGroup();
+        if (allUserGroup != null) {
+            groups.add(allUserGroup.getId());
+        }
+        return groups;
     }
 
     /**
@@ -326,9 +340,9 @@ public final class AuthorizationUtil {
      * @return
      */
     private static Group getAllUsersGroup() {
-        Group group = alienGroupDao.findByName(Constants.GROUP_NAME_ALL_USERS);
+        Group group = alienGroupDao.findByName(AlienConstants.GROUP_NAME_ALL_USERS);
         if (group == null) {
-            log.warn("Default all users group <{}> not found", Constants.GROUP_NAME_ALL_USERS);
+            log.warn("Default all users group [ {} ] not found", AlienConstants.GROUP_NAME_ALL_USERS);
             return null;
         }
         return group;
@@ -390,13 +404,21 @@ public final class AuthorizationUtil {
         return userRoles.size() == 1 && userRoles.contains(role.toString());
     }
 
-    public static void configure(HttpSecurity httpSecurity) throws Exception {
-
+    /**
+     * Utility method to configure the application endpoint whatever security implementation is defined.
+     * 
+     * @param httpSecurity The http security object to configure.
+     * @throws Exception see httpSecurity.authorizeRequests()
+     */
+    public static void configure(HttpSecurity httpSecurity, LogoutSuccessHandler successLogoutHandler) throws Exception {
         // authorizations
-
         httpSecurity.authorizeRequests().antMatchers("/*").permitAll();
         httpSecurity.authorizeRequests().antMatchers("/static/tosca/**").hasAnyAuthority("ADMIN", "COMPONENTS_MANAGER", "COMPONENTS_BROWSER");
+        httpSecurity.authorizeRequests().antMatchers("/rest/admin/health").permitAll();
         httpSecurity.authorizeRequests().antMatchers("/rest/admin/**").hasAuthority("ADMIN");
+
+        // FIXME Secure the editor data
+        // httpSecurity.authorizeRequests().antMatchers("/static/editor/**").access("hasPermission(#contact, 'admin')");
 
         // previous api version support
         httpSecurity.authorizeRequests().antMatchers("/rest/alienEndPoint/**").authenticated();
@@ -408,8 +430,12 @@ public final class AuthorizationUtil {
 
         // login
         httpSecurity.formLogin().defaultSuccessUrl("/rest/auth/status").failureUrl("/rest/auth/authenticationfailed").loginProcessingUrl("/login")
-                .usernameParameter("username").passwordParameter("password").permitAll().and().logout().logoutSuccessUrl("/").deleteCookies("JSESSIONID");
-        httpSecurity.logout().logoutSuccessUrl("/");
+                .usernameParameter("username").passwordParameter("password").permitAll();
+        if (successLogoutHandler == null) {
+            httpSecurity.logout().logoutSuccessUrl("/").deleteCookies("JSESSIONID");
+        } else {
+            httpSecurity.getConfigurer(LogoutConfigurer.class).logoutSuccessHandler(successLogoutHandler);
+        }
 
         // handle non authenticated request
         httpSecurity.exceptionHandling().accessDeniedHandler(accessDeniedHandler);

@@ -1,9 +1,20 @@
 server:
   port: 8088
+  use-forward-headers: true
+#  ssl:
+#    key-store: /home/igor/projets/a4c/certs/server-keystore.jks
+#    key-store-password: changeit
+#    key-password: abcd
+  #session:
+  #  cookie:
+  #    http-only: true
+  #    secure: true
 
 # Configuration of alien4cloud's CSAR repository, temporary folder and upload settings.
 directories:
   alien_init: ${user.home}/init
+#  alien_init: ${user.home}/WKS/A4C/alien4cloud-premium-dist/target/alien4cloud-premium-dist/alien4cloud-premium/init
+
   # alien4cloud main directory (other directories are relative path to this one)
   alien: ${user.home}/.alien
   # directory in which alien4cloud stores Cloud Service Archives
@@ -46,6 +57,9 @@ elasticSearch:
   clusterName: escluster
   local: false
   client: false
+  transportClient: false
+  # a comma separated list of host:port couples
+  hosts: localhost
   resetData: false
   prefix_max_expansions: 10
 
@@ -107,3 +121,36 @@ upload:
 
 audit:
   ttl: 1d
+
+ha:
+  ha_enabled: false
+  consulAgentIp: localhost
+  consulAgentPort: 8500
+  # the ip that will be given to consul for health check (can be a private ip)
+  instanceIp: 127.0.0.1
+  # health will be checked by consul using this period
+  healthCheckPeriodInSecond: 5
+  # the TTL of consul session
+  consulSessionTTLInSecond: 60
+  # the delay between the session invalidation and the lock release
+  consulLockDelayInSecond: 0
+  # the delay before retrying to acquire lock when it fail
+  lockAcquisitionDelayInSecond: 20
+  consul_tls_enabled: false
+  keyStorePath: ""
+  trustStorePath: ""
+  keyStoresPwd: ""
+  serverProtocol: "http"
+  # The minimum free space to consider the system healthy (in bytes). Let's set the default to 10Mo
+  health_disk_space_threshold: 10485760
+
+logs_deployment_appender:
+  enable: false
+
+features:
+  editor_auto_completion: false
+  archive_indexer_lock_used_archive: false
+
+languages:
+  default: en-us
+  prefix: locale

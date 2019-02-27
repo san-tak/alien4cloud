@@ -9,32 +9,32 @@ define(function(require) {
     //  prepare
     if (_.defined(validationDTO[taskType])) {
       var processedList = {};
+      var sourceMap = {}; // errors by source
       validationDTO[taskType].forEach(function(task) {
         if (!processedList.hasOwnProperty(task.code)) {
           processedList[task.code] = [];
         }
         processedList[task.code].push(task);
+        var source = _.get(task, 'source', 'none');
+        if(_.undefined(_.get(sourceMap, [source, taskType, task.code]))) {
+          _.set(sourceMap, [source, taskType, task.code], []);
+        }
+        sourceMap[source][taskType][task.code].push(task);
       });
       // replace the default list
       validationDTO[taskType] = processedList;
+      validationDTO.bySources = sourceMap;
     }
   }
 
   modules.get('a4c-applications').factory('tasksProcessor',
     [ function() {
-        // This service post-process tasks (required and warning)
+        // This service groups tasks by code to ease display
         return {
-          // Just group warnings by category (code) for the display
-          processWarnings: function (validationDTO) {
-            processTaskType(validationDTO, 'warningList');
-          },
-          // Just group tasks by category (code) for the display
-          processRequired: function (validationDTO) {
-            processTaskType(validationDTO, 'taskList');
-          },
           processAll: function (validationDTO) {
-            this.processWarnings(validationDTO);
-            this.processRequired(validationDTO);
+            processTaskType(validationDTO, 'infoList');
+            processTaskType(validationDTO, 'warningList');
+            processTaskType(validationDTO, 'taskList');
           }
         };
       } // function

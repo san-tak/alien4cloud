@@ -12,8 +12,9 @@ import cucumber.api.junit.Cucumber;
         "classpath:alien/rest/application"
         // "classpath:alien/rest/application/create_application.feature"
         // "classpath:alien/rest/application/create_application_with_template.feature"
+        // "classpath:alien/rest/application/delete_application.feature"
         //
 }, format = { "pretty", "html:target/cucumber/application", "json:target/cucumber/cucumber-application.json" })
-//@Ignore
+// @Ignore
 public class RunApplicationIT {
 }

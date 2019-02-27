@@ -8,7 +8,6 @@ import java.util.Map;
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.springframework.aop.framework.Advised;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.io.FileSystemResource;
@@ -17,13 +16,11 @@ import org.yaml.snakeyaml.nodes.*;
 
 import com.google.common.collect.Maps;
 
-import alien4cloud.tosca.model.ArchiveRoot;
 import alien4cloud.tosca.parser.*;
 import alien4cloud.tosca.parser.impl.ErrorCode;
-import alien4cloud.tosca.parser.impl.base.CheckedTypeNodeParser;
+import alien4cloud.tosca.parser.impl.base.BaseParserFactory;
 import alien4cloud.tosca.parser.impl.base.ScalarParser;
 import alien4cloud.tosca.parser.impl.base.TypeNodeParser;
-import alien4cloud.tosca.parser.mapping.DefaultParser;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -31,17 +28,18 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Component
-public class MappingGenerator extends DefaultParser<Map<String, INodeParser>> {
+public class MappingGenerator implements INodeParser<Map<String, INodeParser>> {
     @Resource
     private ApplicationContext applicationContext;
+    @Resource
+    private BaseParserFactory baseParserFactory;
 
     private Map<String, INodeParser> parsers = Maps.newHashMap();
     private Map<String, IMappingBuilder> mappingBuilders = Maps.newHashMap();
-    private Map<String, IChecker> checkers = Maps.newHashMap();
 
     @PostConstruct
     public void initialize() {
-        Map<String, INodeParser> contextParsers = applicationContext.getBeansOfType(INodeParser.class);
+        Map<String, INodeParser> contextParsers = applicationContext.getBeansOfType(INodeParser.class, false, true);
         // register parsers based on their class name.
         for (INodeParser parser : contextParsers.values()) {
             String className;
@@ -55,10 +53,6 @@ public class MappingGenerator extends DefaultParser<Map<String, INodeParser>> {
         Map<String, IMappingBuilder> contextMappingBuilders = applicationContext.getBeansOfType(IMappingBuilder.class);
         for (IMappingBuilder mappingBuilder : contextMappingBuilders.values()) {
             mappingBuilders.put(mappingBuilder.getKey(), mappingBuilder);
-        }
-        Map<String, IChecker> contextCheckers = applicationContext.getBeansOfType(IChecker.class);
-        for (IChecker checker : contextCheckers.values()) {
-            checkers.put(checker.getName(), checker);
         }
     }
 
@@ -120,46 +114,45 @@ public class MappingGenerator extends DefaultParser<Map<String, INodeParser>> {
             throws ClassNotFoundException, IllegalAccessException, InstantiationException {
         // process the mapping of a given type
         if (node instanceof MappingNode) {
-            MappingNode mapping = (MappingNode) node;
+            MappingNode mappingNode = (MappingNode) node;
             String yamlType = null;
             INodeParser<?> parser = null;
-            for (NodeTuple tuple : mapping.getValue()) {
-                // the first in a node mapping must be the yaml key for the type and the definition of the java type to map to or a direct reference to a
-                // parser.
-                if (yamlType == null) {
-                    yamlType = ParserUtils.getScalar(tuple.getKeyNode(), context);
-                    // it's value design the java parser to be used to build the java type.
-                    String type = ParserUtils.getScalar(tuple.getValueNode(), context);
-                    if (type.startsWith("__")) {
-                        parser = getWrapperParser(type, mapping, context);
-                        return new AbstractMap.SimpleEntry<String, INodeParser<?>>(yamlType, parser);
-                    }
-                    // try to find a registered parser for the type. Direct parser reference.
-                    parser = this.parsers.get(type);
-                    if (parser != null) {
-                        log.debug("Mapping yaml type <" + yamlType + "> using parser <" + type + ">");
-                        return new AbstractMap.SimpleEntry<String, INodeParser<?>>(yamlType, parser);
-                    }
-                    // The value for this mapping is not an exising parser, that may be either a java type either the reference to a mapping builder (a
-                    // collection for example).
-                    IMappingBuilder builder = mappingBuilders.get(type);
-                    if (builder != null) {
-                        mapping.getValue().add(0, new NodeTuple(new ScalarNode(new Tag(builder.getKey()), builder.getKey(), tuple.getKeyNode().getStartMark(),
-                                tuple.getKeyNode().getEndMark(), 'c'), tuple.getValueNode()));
-
-                        // there is a builder
-                        parser = builder.buildMapping(mapping, context).getParser();
-                        return new AbstractMap.SimpleEntry<String, INodeParser<?>>(yamlType, parser);
-                    } else {
-                        // If the type doesn't design a referenced parser then we should try to build it.
-                        parser = buildTypeNodeParser(yamlType, type);
-                    }
-                } else {
-                    // process a mapping
-                    map(tuple, (TypeNodeParser) parser, context);
+            if (mappingNode.getValue().size() > 0) {
+                NodeTuple tuple = mappingNode.getValue().get(0);
+                yamlType = ParserUtils.getScalar(tuple.getKeyNode(), context);
+                // it's value design the java parser to be used to build the java type.
+                if (!(tuple.getValueNode() instanceof ScalarNode)) {
+                    log.debug("Ignore mapping for yaml type <" + yamlType + ">");
+                    return null;
                 }
+                String type = ParserUtils.getScalar(tuple.getValueNode(), context);
+                if (type.startsWith("__")) {
+                    parser = getWrapperParser(type, mappingNode, context);
+                    return new AbstractMap.SimpleEntry<String, INodeParser<?>>(yamlType, parser);
+                }
+                // try to find a registered parser for the type. Direct parser reference.
+                parser = this.parsers.get(type);
+                if (parser != null) {
+                    log.debug("Mapping yaml type <" + yamlType + "> using parser <" + type + ">");
+                    return new AbstractMap.SimpleEntry<String, INodeParser<?>>(yamlType, parser);
+                }
+                // The value for this mapping is not an exising parser, that may be either a java type either the reference to a mapping builder (a
+                // collection for example).
+                IMappingBuilder builder = mappingBuilders.get(type);
+                if (builder != null) {
+                    mappingNode.getValue().add(0, new NodeTuple(new ScalarNode(new Tag(builder.getKey()), builder.getKey(), tuple.getKeyNode().getStartMark(),
+                            tuple.getKeyNode().getEndMark(), 'c'), tuple.getValueNode()));
+
+                    // there is a builder
+                    parser = builder.buildMapping(mappingNode, context).getParser();
+                    return new AbstractMap.SimpleEntry<String, INodeParser<?>>(yamlType, parser);
+                } else {
+                    // If the type doesn't design a referenced parser then we should try to build it.
+                    parser = buildTypeNodeParser(yamlType, type);
+                }
+                processTypeMappingKeys(mappingNode, context, parser);
             }
-            return new AbstractMap.SimpleEntry<String, INodeParser<?>>(yamlType, parser);
+            return new AbstractMap.SimpleEntry(yamlType, parser);
         } else {
             context.getParsingErrors().add(new ParsingError(ErrorCode.SYNTAX_ERROR, "Unable to process type mapping.", node.getStartMark(),
                     "Mapping must be defined using a mapping node.", node.getEndMark(), ""));
@@ -167,27 +160,24 @@ public class MappingGenerator extends DefaultParser<Map<String, INodeParser>> {
         return null;
     }
 
-    private TypeNodeParser<?> buildTypeNodeParser(String yamlType, String javaType) throws ClassNotFoundException {
-        String realJavaType = javaType;
-        IChecker checker = null;
-        if (javaType.contains("|")) { // | key allows to define a checker (validator) class in addition to the actual parser.
-            realJavaType = javaType.substring(0, javaType.indexOf("|"));
-            String checkerName = javaType.substring(javaType.indexOf("|") + 1);
-            log.debug(String.format("After parsing <%s>, realJavaType is <%s>, checkerName is <%s>", javaType, realJavaType, checkerName));
-            checker = checkers.get(checkerName);
-            if (checker == null) {
-                log.warn(String.format("Can not find checker <%s>, using a standard TypeNodeParser", checkerName));
+    private void processTypeMappingKeys(MappingNode mappingNode, ParsingContextExecution context, INodeParser<?> parser) {
+        for (NodeTuple tuple : mappingNode.getValue()) {
+            if (Tag.MERGE.equals(tuple.getKeyNode().getTag())) {
+                MappingNode toMerge = (MappingNode) tuple.getValueNode();
+                processTypeMappingKeys(toMerge, context, parser);
+            } else {
+                // process a mapping
+                map(tuple, (TypeNodeParser) parser, context);
             }
         }
+    }
+
+    private TypeNodeParser<?> buildTypeNodeParser(String yamlType, String javaType) throws ClassNotFoundException {
+        String realJavaType = javaType;
+
         Class<?> javaClass = Class.forName(realJavaType);
-        if (checker == null) {
-            log.debug("Mapping yaml type <" + yamlType + "> to class <" + realJavaType + ">");
-            return new TypeNodeParser<>(javaClass, yamlType);
-        } else {
-            // TODO check that the type are compatible
-            log.debug("Mapping yaml type <" + yamlType + "> to class <" + realJavaType + "> using checker " + checker.toString());
-            return new CheckedTypeNodeParser<>(javaClass, yamlType, checker);
-        }
+        log.debug("Mapping yaml type <" + yamlType + "> to class <" + realJavaType + ">");
+        return baseParserFactory.getTypeNodeParser(javaClass, yamlType);
     }
 
     private INodeParser<?> getWrapperParser(String wrapperKey, MappingNode mapping, ParsingContextExecution context) {

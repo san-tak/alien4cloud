@@ -51,6 +51,7 @@ define(function (require) {
             // cleanup layout data from graph
             _.each(graph.nodes(), function(nodeKey) {
               var node = graph.node(nodeKey);
+              node.id = nodeKey;
               delete node.simplified;
               delete node.merged;
               delete node.unwraped;
@@ -62,13 +63,13 @@ define(function (require) {
           }
 
           // prepare groups to draw clusters, edges and nodes.
-          var clustersGroup = this.createOrSelectGroup(svg, 'clusters'),
-            edgesGroup = this.createOrSelectGroup(svg, 'edges'),
+//          var clustersGroup = this.createOrSelectGroup(svg, 'clusters'),
+          var  edgesGroup = this.createOrSelectGroup(svg, 'edges'),
             nodesGroup = this.createOrSelectGroup(svg, 'nodes');
 
           // draw nodes
           this.createNodes(nodesGroup, renderedGraph);
-          this.createClusters(clustersGroup, renderedGraph);
+//          this.createClusters(clustersGroup, renderedGraph);
           this.createEdges(edgesGroup, renderedGraph);
         },
 

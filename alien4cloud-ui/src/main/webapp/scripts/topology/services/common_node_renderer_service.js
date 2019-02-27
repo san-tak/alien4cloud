@@ -5,6 +5,7 @@ define(function (require) {
   var modules = require('modules');
 
   var _ = require('lodash');
+  const COMPONENT_VERSION = 'component_version';
 
   modules.get('a4c-topology-editor').factory('commonNodeRendererService', [ 'd3Service',
     function(d3Service) {
@@ -14,17 +15,16 @@ define(function (require) {
         //----------------------
         tooltip: function(element) {
           var tooltipContent = '<div>';
-
           tooltipContent += '<div>' + element.id;
           if (_.defined(element.type) && element.type.abstract) {
             var icoSize = 16;
             tooltipContent += ' <img src="images/abstract_ico.png" height="' + icoSize + '" width="' + icoSize + '"></img>';
           }
           tooltipContent += '</div>';
-          if (_.defined(element.template.properties)) {
-            if (typeof element.template.properties.version === 'string') {
-              tooltipContent += '<div>' + 'v' + element.template.properties.version + '</div>';
-            }
+          if (_.defined(element, 'template.propertiesMap.component_version.value.value')) {
+            tooltipContent += '<div>' + 'v' + element.template.propertiesMap[COMPONENT_VERSION].value.value + '</div>';
+          } else if(_.defined(element, 'template.propertiesMap.version.value.value')) {
+            tooltipContent += '<div>' + 'v' + element.template.propertiesMap.version.value.value + '</div>';
           }
           tooltipContent += '</div>';
           return tooltipContent;

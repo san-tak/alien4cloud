@@ -43,6 +43,10 @@ public class Deployment {
 
     @TermFilter
     @StringField(indexType = IndexType.not_analyzed)
+    private String deployerUsername;
+
+    @TermFilter
+    @StringField(indexType = IndexType.not_analyzed)
     private DeploymentSourceType sourceType;
 
     /** Id of the orchestrator that manages the deployment. */
@@ -82,6 +86,11 @@ public class Deployment {
     /** End date of the deployment. */
     @TermFilter
     private Date endDate;
+
+    /** Id of the services this deployment depends on. */
+    @TermFilter
+    @StringField(indexType = IndexType.not_analyzed, includeInAll = false)
+    private String[] serviceResourceIds;
 
     /**
      * The last PaaS execution id per workflow.

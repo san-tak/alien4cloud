@@ -1,10 +1,19 @@
 package alien4cloud.it.application.deployment;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.collections4.CollectionUtils;
@@ -17,16 +26,23 @@ import org.elasticsearch.common.collect.Maps;
 import org.elasticsearch.common.collect.Sets;
 import org.junit.Assert;
 
+import alien4cloud.deployment.model.SecretProviderCredentials;
 import alien4cloud.it.Context;
 import alien4cloud.it.application.ApplicationStepDefinitions;
 import alien4cloud.it.common.CommonStepDefinitions;
 import alien4cloud.it.exception.ITException;
+import alien4cloud.it.utils.DataTableUtils;
 import alien4cloud.it.utils.websocket.IStompDataFuture;
 import alien4cloud.it.utils.websocket.StompConnection;
 import alien4cloud.it.utils.websocket.StompData;
 import alien4cloud.model.application.Application;
 import alien4cloud.model.deployment.Deployment;
-import alien4cloud.paas.model.*;
+import alien4cloud.paas.model.DeploymentStatus;
+import alien4cloud.paas.model.InstanceInformation;
+import alien4cloud.paas.model.InstanceStatus;
+import alien4cloud.paas.model.PaaSDeploymentStatusMonitorEvent;
+import alien4cloud.paas.model.PaaSInstancePersistentResourceMonitorEvent;
+import alien4cloud.paas.model.PaaSInstanceStateMonitorEvent;
 import alien4cloud.rest.application.model.DeployApplicationRequest;
 import alien4cloud.rest.deployment.DeploymentDTO;
 import alien4cloud.rest.model.RestResponse;
@@ -60,9 +76,16 @@ public class ApplicationsDeploymentStepDefinitions {
         I_undeploy_it(ApplicationStepDefinitions.CURRENT_APPLICATION, false);
     }
 
-    public void I_undeploy_it(Application application, boolean failsafe) throws Throwable {
-        String envId = Context.getInstance().getDefaultApplicationEnvironmentId(application.getName());
-        String statusRequest = "/rest/v1/applications/" + application.getId() + "/environments/" + envId + "/status";
+    @When("^I undeploy application \"([^\"]*)\", environment \"([^\"]*)\"$")
+    public void I_undeploy_application_environment(String applicationName, String environmentName) throws Throwable {
+        doUndeployApplication(applicationName, environmentName, false);
+    }
+
+    private void doUndeployApplication(String applicationName, String environmentName, boolean failsafe) throws Throwable {
+        String applicationId = Context.getInstance().getApplicationId(applicationName);
+        String envId = environmentName == null ? Context.getInstance().getDefaultApplicationEnvironmentId(applicationName)
+                : Context.getInstance().getApplicationEnvironmentId(applicationName, environmentName);
+        String statusRequest = "/rest/v1/applications/" + applicationId + "/environments/" + envId + "/status";
         RestResponse<String> statusResponse = JsonUtil.read(Context.getRestClientInstance().get(statusRequest), String.class);
         if (failsafe) {
             if (statusResponse.getError() != null) {
@@ -74,10 +97,40 @@ public class ApplicationsDeploymentStepDefinitions {
         DeploymentStatus deploymentStatus = DeploymentStatus.valueOf(statusResponse.getData());
         if (!DeploymentStatus.UNDEPLOYED.equals(deploymentStatus) || !DeploymentStatus.UNDEPLOYMENT_IN_PROGRESS.equals(deploymentStatus)) {
             Context.getInstance().registerRestResponse(
-                    Context.getRestClientInstance().delete("/rest/v1/applications/" + application.getId() + "/environments/" + envId + "/deployment"));
+                    Context.getRestClientInstance().delete("/rest/v1/applications/" + applicationId + "/environments/" + envId + "/deployment"));
         }
-        assertStatus(application.getName(), DeploymentStatus.UNDEPLOYED, Sets.newHashSet(DeploymentStatus.UNDEPLOYMENT_IN_PROGRESS), 10 * 60L * 1000L, null,
+        assertStatus(applicationName, DeploymentStatus.UNDEPLOYED, Sets.newHashSet(DeploymentStatus.UNDEPLOYMENT_IN_PROGRESS), 10 * 60L * 1000L, null,
                 failsafe);
+    }
+
+    private void doUpdateDeployment(String applicationName, String environmentName, SecretProviderCredentials secretProviderCredentials) throws Throwable {
+        String applicationId = Context.getInstance().getApplicationId(applicationName);
+        String envId = environmentName == null ? Context.getInstance().getDefaultApplicationEnvironmentId(applicationName)
+                : Context.getInstance().getApplicationEnvironmentId(applicationName, environmentName);
+        String updateRequestPath = "/rest/v1/applications/" + applicationId + "/environments/" + envId + "/update-deployment";
+        if (secretProviderCredentials == null) {
+            Context.getRestClientInstance().post(updateRequestPath);
+        } else {
+            Context.getRestClientInstance().postJSon(updateRequestPath, JsonUtil.toString(secretProviderCredentials));
+        }
+    }
+
+    @Given("^I update the deployment$")
+    public void i_update_the_deployment() throws Throwable {
+        doUpdateDeployment(ApplicationStepDefinitions.CURRENT_APPLICATION.getName(), null, null);
+    }
+
+
+    @When("^I update the deployment with the following credentials defined by the secret provider plugin \"([^\"]*)\"$")
+    public void iUpdateTheDeploymentWithTheFollowingCredentialsDefinedByTheSecretProviderPlugin(String pluginName, DataTable table) throws Throwable {
+        SecretProviderCredentials secretProviderCredentials = new SecretProviderCredentials();
+        secretProviderCredentials.setPluginName(pluginName);
+        secretProviderCredentials.setCredentials(DataTableUtils.dataTableToMap(table));
+        doUpdateDeployment(ApplicationStepDefinitions.CURRENT_APPLICATION.getName(), null, secretProviderCredentials);
+    }
+
+    public void I_undeploy_it(Application application, boolean failsafe) throws Throwable {
+        doUndeployApplication(application.getName(), null, failsafe);
     }
 
     @When("^I deploy it$")
@@ -85,6 +138,16 @@ public class ApplicationsDeploymentStepDefinitions {
         // deploys the current application on default "Environment"
         log.info("Deploy : Deploying the application " + ApplicationStepDefinitions.CURRENT_APPLICATION.getName());
         DeployApplicationRequest deployApplicationRequest = getDeploymentAppRequest(ApplicationStepDefinitions.CURRENT_APPLICATION.getName(), null);
+        String response = deploy(deployApplicationRequest);
+        Context.getInstance().registerRestResponse(response);
+    }
+
+
+    @When("^I deploy it with the following credentials defined by the secret provider plugin \"([^\"]*)\"$")
+    public void iDeployItWithTheFollowingCredentialsDefinedByTheSecretProviderPlugin(String pluginName, DataTable table) throws Throwable {
+        DeployApplicationRequest deployApplicationRequest = getDeploymentAppRequest(ApplicationStepDefinitions.CURRENT_APPLICATION.getName(), null);
+        deployApplicationRequest.setSecretProviderCredentials(DataTableUtils.dataTableToMap(table));
+        deployApplicationRequest.setSecretProviderPluginName(pluginName);
         String response = deploy(deployApplicationRequest);
         Context.getInstance().registerRestResponse(response);
     }
@@ -453,7 +516,7 @@ public class ApplicationsDeploymentStepDefinitions {
 
     private static final long WAIT_TIME = 30;
 
-    @And("^I should receive \"([^\"]*)\" events that containing$")
+    @And("^I should receive \"([^\"]*)\" events that contains$")
     public void I_should_receive_events_that_containing(String eventTopic, List<String> expectedEvents) throws Throwable {
         Assert.assertTrue(this.stompDataFutures.containsKey(eventTopic));
         List<String> actualEvents = Lists.newArrayList();
@@ -548,6 +611,21 @@ public class ApplicationsDeploymentStepDefinitions {
                 Sets.newHashSet(DeploymentStatus.INIT_DEPLOYMENT, DeploymentStatus.DEPLOYMENT_IN_PROGRESS), numberOfMinutes * 60L * 1000L, null, true);
     }
 
+    @And("^The deployment update should succeed after (\\d+) minutes$")
+    public void The_deployment_update_should_succeed_after_minutes(long numberOfMinutes) throws Throwable {
+        // null value for environmentName => use default environment
+        assertStatus(ApplicationStepDefinitions.CURRENT_APPLICATION.getName(), DeploymentStatus.UPDATED,
+                Sets.newHashSet(DeploymentStatus.UPDATE_IN_PROGRESS), numberOfMinutes * 60L * 1000L, null, true);
+    }
+
+    @And("^The deployment update should fail$")
+    public void The_deployment_update_should_fail() throws Throwable {
+        // null value for environmentName => use default environment
+        // FIXME: for the moment when the update fails, the status of the deployment is DEPLOYED !!
+        assertStatus(ApplicationStepDefinitions.CURRENT_APPLICATION.getName(), DeploymentStatus.DEPLOYED,
+                Sets.newHashSet(DeploymentStatus.UPDATE_IN_PROGRESS, DeploymentStatus.UPDATE_FAILURE), 1 * 60L * 1000L, null, true);
+    }
+
     @Then("^all nodes instances must be in \"([^\"]*)\" state after (\\d+) minutes$")
     public void all_nodes_instances_must_be_in_state_after_minutes(String expectedState, long numberOfMinutes) throws Throwable {
         long timeout = numberOfMinutes * 60L * 1000L;
@@ -592,7 +670,7 @@ public class ApplicationsDeploymentStepDefinitions {
         log.info("Re-deploy : Deploying the application " + ApplicationStepDefinitions.CURRENT_APPLICATION.getName());
         I_deploy_it();
         // Sleep some seconds to be sure that the application status has changed
-        Thread.sleep(31000L);
+        Thread.sleep(60000L);
         log.info("Re-deploy : Finished deployment of the application " + ApplicationStepDefinitions.CURRENT_APPLICATION.getName());
     }
 
@@ -609,7 +687,7 @@ public class ApplicationsDeploymentStepDefinitions {
         int countNotStarted = 0;
         for (Map.Entry<String, Object> instanceInformationEntry : nodeInformation.entrySet()) {
             Map<String, Object> instanceInformation = (Map<String, Object>) instanceInformationEntry.getValue();
-            if (!Objects.equals(InstanceStatus.SUCCESS, instanceInformation.get("instanceStatus"))) {
+            if (!Objects.equals(InstanceStatus.SUCCESS.toString(), instanceInformation.get("instanceStatus"))) {
                 countNotStarted++;
             }
         }

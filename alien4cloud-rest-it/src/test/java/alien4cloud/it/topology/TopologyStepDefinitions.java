@@ -1,61 +1,60 @@
 package alien4cloud.it.topology;
 
-import static org.junit.Assert.*;
+import static alien4cloud.it.utils.TestUtils.getFullId;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.commons.io.FileUtils;
+import org.alien4cloud.tosca.catalog.CatalogVersionResult;
+import org.alien4cloud.tosca.model.CSARDependency;
+import org.alien4cloud.tosca.model.definitions.DeploymentArtifact;
+import org.alien4cloud.tosca.model.templates.NodeGroup;
+import org.alien4cloud.tosca.model.templates.NodeTemplate;
+import org.alien4cloud.tosca.model.templates.RelationshipTemplate;
+import org.alien4cloud.tosca.model.templates.ScalingPolicy;
+import org.alien4cloud.tosca.model.types.AbstractInheritableToscaType;
+import org.alien4cloud.tosca.model.types.AbstractToscaType;
+import org.alien4cloud.tosca.model.types.CapabilityType;
+import org.alien4cloud.tosca.model.types.NodeType;
+import org.alien4cloud.tosca.model.types.RelationshipType;
+import org.alien4cloud.tosca.utils.TopologyUtils;
 import org.apache.commons.lang3.ArrayUtils;
-import org.apache.http.NameValuePair;
-import org.apache.http.message.BasicNameValuePair;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.Maps;
 import org.elasticsearch.mapping.MappingBuilder;
 import org.junit.Assert;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 import alien4cloud.dao.ElasticSearchDAO;
-import alien4cloud.dao.model.FacetedSearchResult;
-import alien4cloud.dao.model.GetMultipleDataResult;
 import alien4cloud.it.Context;
 import alien4cloud.it.common.CommonStepDefinitions;
-import alien4cloud.it.components.AddCommponentDefinitionSteps;
-import alien4cloud.it.setup.TestDataRegistry;
-import alien4cloud.model.components.*;
-import alien4cloud.model.templates.TopologyTemplateVersion;
-import alien4cloud.model.topology.NodeGroup;
-import alien4cloud.model.topology.NodeTemplate;
-import alien4cloud.model.topology.RelationshipTemplate;
-import alien4cloud.model.topology.ScalingPolicy;
-import alien4cloud.paas.function.FunctionEvaluator;
-import alien4cloud.rest.component.SearchRequest;
 import alien4cloud.rest.model.RestResponse;
-import alien4cloud.rest.topology.AddRelationshipTemplateRequest;
-import alien4cloud.rest.topology.NodeTemplateRequest;
-import alien4cloud.rest.topology.UpdateIndexedTypePropertyRequest;
-import alien4cloud.rest.topology.UpdatePropertyRequest;
 import alien4cloud.rest.utils.JsonUtil;
 import alien4cloud.topology.TopologyDTO;
-import alien4cloud.topology.TopologyUtils;
+import alien4cloud.topology.TopologyValidationResult;
+import alien4cloud.topology.task.AbstractTask;
+import alien4cloud.topology.task.ArtifactTask;
 import alien4cloud.topology.task.RequirementToSatisfy;
 import alien4cloud.topology.task.TaskCode;
 import alien4cloud.topology.task.TaskLevel;
 import alien4cloud.tosca.properties.constraints.ConstraintUtil.ConstraintInformation;
-import alien4cloud.utils.FileUtil;
+import alien4cloud.utils.AlienConstants;
 import alien4cloud.utils.MapUtil;
+import alien4cloud.utils.PropertyUtil;
 import cucumber.api.DataTable;
 import cucumber.api.PendingException;
 import cucumber.api.java.en.And;
@@ -66,7 +65,7 @@ import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public class TopologyStepDefinitions {
-    private final static Map<String, Class<? extends IndexedToscaElement>> WORDS_TO_CLASSES;
+    private final static Map<String, Class<? extends AbstractToscaType>> WORDS_TO_CLASSES;
     private final ObjectMapper jsonMapper = new ObjectMapper();
     private final Client esClient = Context.getEsClientInstance();
 
@@ -74,9 +73,9 @@ public class TopologyStepDefinitions {
 
     static {
         WORDS_TO_CLASSES = Maps.newHashMap();
-        WORDS_TO_CLASSES.put("node type", IndexedNodeType.class);
-        WORDS_TO_CLASSES.put("relationship type", IndexedRelationshipType.class);
-        WORDS_TO_CLASSES.put("node types", IndexedNodeType.class);
+        WORDS_TO_CLASSES.put("node type", NodeType.class);
+        WORDS_TO_CLASSES.put("relationship type", RelationshipType.class);
+        WORDS_TO_CLASSES.put("node types", NodeType.class);
     }
 
     @When("^I retrieve the newly created topology$")
@@ -116,10 +115,9 @@ public class TopologyStepDefinitions {
 
     @Given("^There is a \"([^\"]*)\" with element name \"([^\"]*)\" and archive version \"([^\"]*)\"$")
     public void There_is_a_with_element_name_and_archive_version(String elementType, String elementId, String archiveVersion) throws Throwable {
-        String componentId = elementId.concat(":").concat(archiveVersion);
+        String componentId = getFullId(elementId, archiveVersion);
         Context.getInstance().registerRestResponse(Context.getRestClientInstance().get("/rest/v1/components/" + componentId));
-        IndexedToscaElement idnt = JsonUtil.read(Context.getInstance().takeRestResponse(), WORDS_TO_CLASSES.get(elementType), Context.getJsonMapper())
-                .getData();
+        AbstractToscaType idnt = JsonUtil.read(Context.getInstance().takeRestResponse(), WORDS_TO_CLASSES.get(elementType), Context.getJsonMapper()).getData();
         assertNotNull(idnt);
         assertEquals(componentId, idnt.getId());
     }
@@ -127,89 +125,11 @@ public class TopologyStepDefinitions {
     @Given("^There are properties for \"([^\"]*)\" element \"([^\"]*)\" and archive version \"([^\"]*)\"$")
     public void There_are_properties_for_element_and_archive_version(String elementType, String elementId, String archiveVersion, DataTable properties)
             throws Throwable {
-        String componentId = elementId.concat(":").concat(archiveVersion);
+        String componentId = getFullId(elementId, archiveVersion);
         Context.getInstance().registerRestResponse(Context.getRestClientInstance().get("/rest/v1/components/" + componentId));
-        IndexedToscaElement idnt = JsonUtil.read(Context.getInstance().takeRestResponse(), WORDS_TO_CLASSES.get(elementType), Context.getJsonMapper())
-                .getData();
+        AbstractToscaType idnt = JsonUtil.read(Context.getInstance().takeRestResponse(), WORDS_TO_CLASSES.get(elementType), Context.getJsonMapper()).getData();
         assertNotNull(idnt);
         assertEquals(componentId, idnt.getId());
-    }
-
-    @When("^I add a node template \"([^\"]*)\" related to the \"([^\"]*)\" node type$")
-    public void I_add_a_node_template_related_to_the_node_type(String name, String indexedNodeTypeId) throws Throwable {
-        NodeTemplateRequest req = new NodeTemplateRequest(name, indexedNodeTypeId);
-        String jSon = jsonMapper.writeValueAsString(req);
-        String topologyId = Context.getInstance().getTopologyId();
-        String restResponse = Context.getRestClientInstance().postJSon("/rest/v1/topologies/" + topologyId + "/nodetemplates", jSon);
-        Context.getInstance().registerRestResponse(restResponse);
-    }
-
-    @When("^I have added a node template \"([^\"]*)\" related to the \"([^\"]*)\" node type$")
-    public void I_have_added_a_node_template_related_to_the_node_type(String name, String indexedNodeTypeId) throws Throwable {
-        I_add_a_node_template_related_to_the_node_type(name, indexedNodeTypeId);
-        The_RestResponse_should_contain_a_node_type_with_id(indexedNodeTypeId);
-    }
-
-    @When("^I have added a node template \"([^\"]*)\" related to the \"([^\"]*)\" node type without check$")
-    public void I_have_added_a_node_template_related_to_the_node_type_without_check(String name, String indexedNodeTypeId) throws Throwable {
-        I_add_a_node_template_related_to_the_node_type(name, indexedNodeTypeId);
-    }
-
-    @When("^I delete a node template \"([^\"]*)\" from the topology$")
-    public void I_delete_a_node_template_from_the_topology(String name) throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        Context.getInstance().registerRestResponse(Context.getRestClientInstance().delete("/rest/v1/topologies/" + topologyId + "/nodetemplates/" + name));
-    }
-
-    @When("^I update the node template's name from \"([^\"]*)\" to \"([^\"]*)\"$")
-    public void I_update_the_node_template_name_from_to(String oldName, String newName) throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().put("/rest/v1/topologies/" + topologyId + "/nodetemplates/" + oldName + "/updateName/" + newName));
-    }
-
-    @When("^I add a relationship of type \"([^\"]*)\" defined in archive \"([^\"]*)\" version \"([^\"]*)\" with source \"([^\"]*)\" and target \"([^\"]*)\" for requirement \"([^\"]*)\" of type \"([^\"]*)\" and target capability \"([^\"]*)\"$")
-    public void I_add_a_relationship_of_type_with_source_and_target_for_requirement_of_type_and_target_capability(String relType, String archiveName,
-                                                                                                                  String archiveVersion, String source, String target, String requirementName, String requirementType, String targetCapability) throws Throwable {
-        I_add_a_relationship_of_type_with_source_and_target_for_requirement_of_type_and_target_capability(null, relType, archiveName, archiveVersion, source,
-                target, requirementName, requirementType, targetCapability);
-    }
-
-    @Given("^I have added a relationship \"([^\"]*)\" of type \"([^\"]*)\" defined in archive \"([^\"]*)\" version \"([^\"]*)\" with source \"([^\"]*)\" and target \"([^\"]*)\" for requirement \"([^\"]*)\" of type \"([^\"]*)\" and target capability \"([^\"]*)\"$")
-    public void I_have_added_a_relationship_of_type_with_source_and_target_for_requirement_of_type_and_target_capability(String relName, String relType,
-                                                                                                                         String archiveName, String archiveVersion, String source, String target, String requirementName, String requirementType, String capabilityName)
-            throws Throwable {
-        I_add_a_relationship_of_type_with_source_and_target_for_requirement_of_type_and_target_capability(relName, relType, archiveName, archiveVersion,
-                source, target, requirementName, requirementType, capabilityName);
-        commonStepDefinitions.I_should_receive_a_RestResponse_with_no_error();
-    }
-
-    @Given("^I add a relationship \"([^\"]*)\" of type \"([^\"]*)\" defined in archive \"([^\"]*)\" version \"([^\"]*)\" with source \"([^\"]*)\" and target \"([^\"]*)\" for requirement \"([^\"]*)\" of type \"([^\"]*)\" and target capability \"([^\"]*)\"$")
-    public void I_add_a_relationship_of_type_with_source_and_target_for_requirement_of_type_and_target_capability(String relName, String relType,
-                                                                                                                  String archiveName, String archiveVersion, String source, String target, String requirementName, String requirementType, String targetCapabilityName)
-            throws Throwable {
-        RelationshipTemplate relTemp = new RelationshipTemplate();
-        relTemp.setType(relType);
-        relTemp.setTarget(target);
-        relTemp.setRequirementName(requirementName);
-        relTemp.setRequirementType(requirementType);
-        relTemp.setTargetedCapabilityName(targetCapabilityName);
-        String topologyId = Context.getInstance().getTopologyId();
-        relName = relName == null || relName.isEmpty() ? getRelationShipName(relType, target) : relName;
-        AddRelationshipTemplateRequest addRelationshipTemplateRequest = new AddRelationshipTemplateRequest();
-        addRelationshipTemplateRequest.setArchiveName(archiveName);
-        addRelationshipTemplateRequest.setArchiveVersion(archiveVersion);
-        addRelationshipTemplateRequest.setRelationshipTemplate(relTemp);
-        String json = jsonMapper.writeValueAsString(addRelationshipTemplateRequest);
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().postJSon("/rest/v1/topologies/" + topologyId + "/nodetemplates/" + source + "/relationships/" + relName, json));
-    }
-
-    @When("^I add a relationship of type \"([^\"]*)\" defined in archive \"([^\"]*)\" version \"([^\"]*)\" with source \"([^\"]*)\" and target \"([^\"]*)\"$")
-    public void I_add_a_relationship_of_type_with_source_and_target(String relType, String archiveName, String archiveVersion, String source, String target)
-            throws Throwable {
-        I_add_a_relationship_of_type_with_source_and_target_for_requirement_of_type_and_target_capability(relType, archiveName, archiveVersion, source, target,
-                null, null, null);
     }
 
     private String getRelationShipName(String type, String target) {
@@ -270,37 +190,6 @@ public class TopologyStepDefinitions {
         assertNotNull(nodeTemplates.get(name));
     }
 
-    @When("^I update the node template \"([^\"]*)\"'s property \"([^\"]*)\" to \"([^\"]*)\"$")
-    public void I_update_the_node_template_s_property_to(String nodeTempName, String propertyName, String propertyValue) throws Throwable {
-        updateNodeTemplateProperty(nodeTempName, propertyName, propertyValue);
-    }
-
-    private void updateNodeTemplateProperty(String nodeTempName, String propertyName, Object propertyValue) throws IOException {
-        String topologyId = Context.getInstance().getTopologyId();
-        UpdatePropertyRequest req = new UpdatePropertyRequest(propertyName, propertyValue);
-        String json = jsonMapper.writeValueAsString(req);
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().postJSon("/rest/v1/topologies/" + topologyId + "/nodetemplates/" + nodeTempName + "/properties", json));
-    }
-
-    @When("^I update the node template \"([^\"]*)\"'s capability \"([^\"]*)\" of type \"([^\"]*)\"'s property \"([^\"]*)\" to \"([^\"]*)\"$")
-    public void I_update_the_node_template_s_capability_of_type_s_property_to(String nodeTempName, String capabilityName, String capabilityType,
-                                                                              String propertyName, Object propertyValue) throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        UpdateIndexedTypePropertyRequest req = new UpdateIndexedTypePropertyRequest(propertyName, propertyValue, capabilityType);
-        String json = jsonMapper.writeValueAsString(req);
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().postJSon(
-                        "/rest/v1/topologies/" + topologyId + "/nodetemplates/" + nodeTempName + "/capability/" + capabilityName + "/updateProperty", json));
-    }
-
-    @When("^I reset the node template \"([^\"]*)\"'s artifact \"([^\"]*)\" to default value$")
-    public void I_reset_the_node_template_s_artifact_to_default_value(String nodeTemplateName, String artifactId) throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        String url = "/rest/v1/topologies/" + topologyId + "/nodetemplates/" + nodeTemplateName + "/artifacts/" + artifactId + "/reset";
-        Context.getInstance().registerRestResponse(Context.getRestClientInstance().put(url));
-    }
-
     @Then("^The topology should contain a nodetemplate named \"([^\"]*)\" with property \"([^\"]*)\" set to \"([^\"]*)\"$")
     public void The_topology_should_contain_a_nodetemplate_named_with_property_set_to(String nodeTemplateName, String propertyName, String propertyValue)
             throws Throwable {
@@ -313,12 +202,31 @@ public class TopologyStepDefinitions {
         if (propertyValue != null) {
             assertNotNull(nodeTemp.getProperties().get(propertyName));
         }
-        assertEquals(propertyValue, FunctionEvaluator.getScalarValue(nodeTemp.getProperties().get(propertyName)));
+        assertEquals(propertyValue, PropertyUtil.getScalarValue(nodeTemp.getProperties().get(propertyName)));
     }
 
     @Then("^The topology should contain a nodetemplate named \"([^\"]*)\" with property \"([^\"]*)\" set to null$")
     public void The_topology_should_contain_a_nodetemplate_named_with_property_set_to_null(String nodeTemplateName, String propertyName) throws Throwable {
         The_topology_should_contain_a_nodetemplate_named_with_property_set_to(nodeTemplateName, propertyName, null);
+    }
+
+    @And("^The topology should contain a nodetemplate named \"([^\"]*)\" with property \"([^\"]*)\" of capability \"([^\"]*)\" set to \"([^\"]*)\"$")
+    public void theTopologyShouldContainANodetemplateNamedWithPropertyOfCapabilitySetToNull(String nodeTemplateName, String propertyName, String capabilityName, String propertyValue) throws Throwable {
+        The_topology_should_contain_a_nodetemplate_named(nodeTemplateName);
+
+        String topologyResponseText = Context.getInstance().getRestResponse();
+        NodeTemplate nodeTemp = JsonUtil.read(topologyResponseText, TopologyDTO.class, Context.getJsonMapper()).getData().getTopology().getNodeTemplates()
+                .get(nodeTemplateName);
+        assertNotNull(nodeTemp.getCapabilities().get(capabilityName).getProperties());
+        if (propertyValue != null) {
+            assertNotNull(nodeTemp.getCapabilities().get(capabilityName).getProperties().get(propertyName));
+        }
+        assertEquals(propertyValue, PropertyUtil.getScalarValue(nodeTemp.getCapabilities().get(capabilityName).getProperties().get(propertyName)));
+    }
+
+    @And("^The topology should contain a nodetemplate named \"([^\"]*)\" with property \"([^\"]*)\" of capability \"([^\"]*)\" set to null$")
+    public void theTopologyShouldContainANodetemplateNamedWithPropertyOfCapabilitySetToNull(String nodeTemplateName, String propertyName, String capabilityName) throws Throwable {
+        theTopologyShouldContainANodetemplateNamedWithPropertyOfCapabilitySetToNull(nodeTemplateName, propertyName, capabilityName, null);
     }
 
     @Then("^I should have a relationship with type \"([^\"]*)\" from \"([^\"]*)\" to \"([^\"]*)\" in ALIEN$")
@@ -344,7 +252,7 @@ public class TopologyStepDefinitions {
 
     @Then("^I should have (\\d+) relationship with source \"([^\"]*)\" and target \"([^\"]*)\" for type \"([^\"]*)\" with requirement \"([^\"]*)\" of type \"([^\"]*)\"$")
     public void I_should_have_relationship_with_source_for_requirement_of_type(int relationshipCount, String source, String target, String relType,
-                                                                               String requirementName, String requirementType) throws Throwable {
+            String requirementName, String requirementType) throws Throwable {
         String topologyJson = Context.getRestClientInstance().get("/rest/v1/topologies/" + Context.getInstance().getTopologyId());
         RestResponse<TopologyDTO> topologyResponse = JsonUtil.read(topologyJson, TopologyDTO.class, Context.getJsonMapper());
         NodeTemplate sourceNode = topologyResponse.getData().getTopology().getNodeTemplates().get(source);
@@ -375,19 +283,15 @@ public class TopologyStepDefinitions {
     @When("^I check for the valid status of the topology$")
     public void I_check_for_the_valid_status_of_the_topology() throws Throwable {
         String topologyId = Context.getInstance().getTopologyId();
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().get(
-                        "/rest/v1/topologies/" + topologyId + "/isvalid?environmentId="
-                                + Context.getInstance().getDefaultApplicationEnvironmentId(Context.getInstance().getApplication().getName())));
+        Context.getInstance().registerRestResponse(Context.getRestClientInstance().get("/rest/v1/topologies/" + topologyId + "/isvalid?environmentId="
+                + Context.getInstance().getDefaultApplicationEnvironmentId(Context.getInstance().getApplication().getName())));
     }
 
     @When("^I check for the valid status of the topology on the default environment$")
     public void I_check_for_the_valid_status_of_the_topology_on_the_default_environment() throws Throwable {
         String topologyId = Context.getInstance().getTopologyId();
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().get(
-                        "/rest/v1/topologies/" + topologyId + "/isvalid?environmentId="
-                                + Context.getInstance().getDefaultApplicationEnvironmentId(Context.getInstance().getApplication().getName())));
+        Context.getInstance().registerRestResponse(Context.getRestClientInstance().get("/rest/v1/topologies/" + topologyId + "/isvalid?environmentId="
+                + Context.getInstance().getDefaultApplicationEnvironmentId(Context.getInstance().getApplication().getName())));
     }
 
     @Then("^the topology should be valid$")
@@ -415,11 +319,13 @@ public class TopologyStepDefinitions {
 
     @Given("^i create a relationshiptype \"([^\"]*)\" in an archive name \"([^\"]*)\" version \"([^\"]*)\" with properties$")
     public void i_create_a_relationshiptype_in_an_archive_name_version_with_properties(String elementId, String archiveName, String archiveVersion,
-                                                                                       DataTable properties) throws Throwable {
-        IndexedRelationshipType relationship = new IndexedRelationshipType();
+            DataTable properties) throws Throwable {
+        RelationshipType relationship = new RelationshipType();
+
         relationship.setArchiveName(archiveName);
         relationship.setArchiveVersion(archiveVersion);
         relationship.setElementId(elementId);
+        relationship.setWorkspace(AlienConstants.GLOBAL_WORKSPACE_ID);
         for (List<String> propertyObject : properties.raw()) {
             if (propertyObject.get(0).equals("validSource")) {
                 relationship.setValidSources(propertyObject.get(1).split(","));
@@ -430,20 +336,21 @@ public class TopologyStepDefinitions {
             }
         }
 
-        esClient.prepareIndex(ElasticSearchDAO.TOSCA_ELEMENT_INDEX, MappingBuilder.indexTypeFromClass(IndexedRelationshipType.class))
+        esClient.prepareIndex(ElasticSearchDAO.TOSCA_ELEMENT_INDEX, MappingBuilder.indexTypeFromClass(RelationshipType.class))
                 .setSource(JsonUtil.toString(relationship)).setRefresh(true).execute().actionGet();
     }
 
     @Given("^I create a \"([^\"]*)\" \"([^\"]*)\" in an archive name \"([^\"]*)\" version \"([^\"]*)\"$")
     public void I_create_a_in_an_archive_name_version(String componentType, String elementId, String archiveName, String archiveVersion) throws Throwable {
-        IndexedInheritableToscaElement element = new IndexedInheritableToscaElement();
+        AbstractInheritableToscaType element = new AbstractInheritableToscaType();
         element.setAbstract(false);
         element.setElementId(elementId);
         element.setArchiveName(archiveName);
         element.setArchiveVersion(archiveVersion);
+        element.setWorkspace(AlienConstants.GLOBAL_WORKSPACE_ID);
         Class<?> clazz = null;
         if (componentType.equals("capability") || componentType.equals("capabilities")) {
-            clazz = IndexedCapabilityType.class;
+            clazz = CapabilityType.class;
         } else {
             throw new PendingException("creation of Type " + componentType + "not supported!");
         }
@@ -459,19 +366,6 @@ public class TopologyStepDefinitions {
         }
     }
 
-    @Given("^I add to the csar \"([^\"]*)\" \"([^\"]*)\" the component \"([^\"]*)\"$")
-    public void I_add_to_the_csar_the_component(String csarName, String csarVersion, String componentFileName) throws Throwable {
-        String csarId = csarName + ":" + csarVersion;
-        AddCommponentDefinitionSteps.uploadComponent(csarId, componentFileName);
-    }
-
-    @Given("^I add to the csar \"([^\"]*)\" \"([^\"]*)\" the components$")
-    public void I_add_to_the_csar_the_components(String csarName, String csarVersion, List<String> componentFileNames) throws Throwable {
-        for (String componentFileName : componentFileNames) {
-            I_add_to_the_csar_the_component(csarName, csarVersion, componentFileName);
-        }
-    }
-
     @Then("^there should not be suggested nodetypes for the \"([^\"]*)\" node template$")
     public void there_should_not_be_suggested_nodetypes_for_the_node_template(String nodeTemplateName) throws Throwable {
         RestResponse<Map> restResponse = JsonUtil.read(Context.getInstance().getRestResponse(), Map.class, Context.getJsonMapper());
@@ -483,13 +377,12 @@ public class TopologyStepDefinitions {
         assertNull(getSuggestedNodesFor(nodeTemplateName, tasklist));
     }
 
-    private IndexedNodeType[] getSuggestedNodesFor(String nodeTemplateName, Object taskList) throws IOException {
+    private NodeType[] getSuggestedNodesFor(String nodeTemplateName, Object taskList) throws IOException {
         for (Map<String, Object> task : (List<Map<String, Object>>) taskList) {
             String nodeTemp = (String) MapUtil.get(task, "nodeTemplateName");
             List<Object> suggestedNodeTypes = (List<Object>) MapUtil.get(task, "suggestedNodeTypes");
             if (nodeTemp.equals(nodeTemplateName) && suggestedNodeTypes != null) {
-                return JsonUtil.toArray(Context.getInstance().getJsonMapper().writeValueAsString(suggestedNodeTypes), IndexedNodeType.class,
-                        Context.getJsonMapper());
+                return JsonUtil.toArray(Context.getInstance().getJsonMapper().writeValueAsString(suggestedNodeTypes), NodeType.class, Context.getJsonMapper());
             }
         }
         return null;
@@ -505,7 +398,7 @@ public class TopologyStepDefinitions {
         assertNotNull(tasklist);
         for (List<String> expected : expectedSuggestedElemntIds.raw()) {
             String[] expectedElementIds = expected.get(1).split(",");
-            IndexedNodeType[] indexedNodeTypes = getSuggestedNodesFor(expected.get(0), tasklist);
+            NodeType[] indexedNodeTypes = getSuggestedNodesFor(expected.get(0), tasklist);
             assertNotNull(indexedNodeTypes);
             String[] suggestedElementIds = getElementsId(indexedNodeTypes);
             assertNotNull(suggestedElementIds);
@@ -518,29 +411,6 @@ public class TopologyStepDefinitions {
 
     private static final String ARTIFACT_PATH = "./src/test/resources/data/artifacts/";
 
-    @When("^I update the node template \"([^\"]*)\"'s artifact \"([^\"]*)\" with \"([^\"]*)\"$")
-    public void I_update_the_node_template_s_artifact_with(String nodeTemplateName, String artifactId, String artifactName) throws Throwable {
-        I_update_the_node_template_s_artifact_with_file_at_path(nodeTemplateName, artifactId, Paths.get(ARTIFACT_PATH, artifactName).toString());
-    }
-
-    @When("^I update the node template \"([^\"]*)\"'s artifact \"([^\"]*)\" with file at path \"([^\"]*)\"$")
-    public void I_update_the_node_template_s_artifact_with_file_at_path(String nodeTemplateName, String artifactId, String artifactPath) throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        String url = "/rest/v1/topologies/" + topologyId + "/nodetemplates/" + nodeTemplateName + "/artifacts/" + artifactId;
-        InputStream artifactStream = Files.newInputStream(Paths.get(artifactPath));
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().postMultipart(url, Paths.get(artifactPath).getFileName().toString(), artifactStream));
-    }
-
-    @When("^I associate the artifact \"([^\"]*)\" of node template \"([^\"]*)\" as an input artifact \"([^\"]*)\"$")
-    public void I_associate_the_artifact_of_node_template_as_an_input_artifact(String artifactId, String nodeTemplateName, String artifactInputName)
-            throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().postJSon(
-                        "/rest/v1/topologies/" + topologyId + "/nodetemplates/" + nodeTemplateName + "/artifacts/" + artifactId + "/" + artifactInputName, ""));
-    }
-
     @When("^I update the application's input artifact \"([^\"]*)\" with \"([^\"]*)\"$")
     public void I_update_the_application_s_input_artifact_with(String artifactId, String artifactName) throws Throwable {
         String topologyId = Context.getInstance().getTopologyId();
@@ -551,7 +421,7 @@ public class TopologyStepDefinitions {
 
     @Then("^The topology should contain a nodetemplate named \"([^\"]*)\" with an artifact \"([^\"]*)\" with the specified UID and name \"([^\"]*)\"$")
     public void The_topology_should_contain_a_nodetemplate_named_with_an_artifact_with_the_specified_UID(String nodeTemplateName, String artifactId,
-                                                                                                         String artifactName) throws Throwable {
+            String artifactName) throws Throwable {
         The_topology_should_contain_a_nodetemplate_named(nodeTemplateName);
 
         String topologyResponseText = Context.getInstance().getRestResponse();
@@ -585,13 +455,6 @@ public class TopologyStepDefinitions {
         }
     }
 
-    @Given("^I have deleted a node template \"([^\"]*)\" from the topology$")
-    public void I_have_deleted_a_node_template_from_the_topology(String nodeTemplateName) throws Throwable {
-        I_delete_a_node_template_from_the_topology(nodeTemplateName);
-        commonStepDefinitions.I_should_receive_a_RestResponse_with_no_error();
-        The_RestResponse_should_not_contain_a_nodetemplate_named(nodeTemplateName);
-    }
-
     private List<RequirementToSatisfy> getRequirementsToSatisfy(String nodeTemplateName, Object taskList) throws IOException {
         for (Map<String, Object> task : (List<Map<String, Object>>) taskList) {
             String nodeTemp = (String) MapUtil.get(task, "nodeTemplateName");
@@ -603,9 +466,9 @@ public class TopologyStepDefinitions {
         return null;
     }
 
-    public String[] getElementsId(IndexedNodeType... indexedNodeTypes) {
+    public String[] getElementsId(NodeType... indexedNodeTypes) {
         String[] toReturn = null;
-        for (IndexedNodeType indexedNodeType : indexedNodeTypes) {
+        for (NodeType indexedNodeType : indexedNodeTypes) {
             toReturn = ArrayUtils.add(toReturn, indexedNodeType.getElementId());
         }
         return toReturn;
@@ -634,13 +497,13 @@ public class TopologyStepDefinitions {
 
     @Then("^the scaling policy of the node \"([^\"]*)\" should match max instances equals to (\\d+), initial instances equals to (\\d+) and min instances equals to (\\d+)$")
     public void the_scaling_policy_of_the_node_should_match_max_instances_equals_to_initial_instances_equals_to_and_min_instances_equals_to(String nodeName,
-                                                                                                                                            int maxInstances, int initialInstances, int minInstances) throws Throwable {
+            int maxInstances, int initialInstances, int minInstances) throws Throwable {
         I_try_to_retrieve_the_created_topology();
         String topologyResponseText = Context.getInstance().getRestResponse();
         RestResponse<TopologyDTO> topologyResponse = JsonUtil.read(topologyResponseText, TopologyDTO.class, Context.getJsonMapper());
         assertNotNull(topologyResponse.getData());
-        ScalingPolicy computePolicy = TopologyUtils.getScalingPolicy(TopologyUtils.getScalableCapability(topologyResponse.getData().getTopology(), nodeName,
-                true));
+        ScalingPolicy computePolicy = TopologyUtils
+                .getScalingPolicy(TopologyUtils.getScalableCapability(topologyResponse.getData().getTopology(), nodeName, true));
         assertNotNull(computePolicy);
         assertEquals(maxInstances, computePolicy.getMaxInstances());
         assertEquals(minInstances, computePolicy.getMinInstances());
@@ -653,8 +516,8 @@ public class TopologyStepDefinitions {
         String topologyResponseText = Context.getInstance().getRestResponse();
         RestResponse<TopologyDTO> topologyResponse = JsonUtil.read(topologyResponseText, TopologyDTO.class, Context.getJsonMapper());
         assertNotNull(topologyResponse.getData());
-        ScalingPolicy computePolicy = TopologyUtils.getScalingPolicy(TopologyUtils.getScalableCapability(topologyResponse.getData().getTopology(), nodeName,
-                true));
+        ScalingPolicy computePolicy = TopologyUtils
+                .getScalingPolicy(TopologyUtils.getScalableCapability(topologyResponse.getData().getTopology(), nodeName, true));
         assertEquals(ScalingPolicy.NOT_SCALABLE_POLICY, computePolicy);
     }
 
@@ -679,45 +542,6 @@ public class TopologyStepDefinitions {
         }
     }
 
-    @When("^I rename the relationship \"([^\"]*)\" into \"([^\"]*)\" from the node template \"([^\"]*)\"$")
-    public void I_rename_the_relationship_into_from_the_node_template(String oldRelationshipName, String newRelationshipName, String nodeTemplateName)
-            throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        NameValuePair nvp = new BasicNameValuePair("newName", newRelationshipName);
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().putUrlEncoded(
-                        "/rest/v1/topologies/" + topologyId + "/nodetemplates/" + nodeTemplateName + "/relationships/" + oldRelationshipName + "/updateName",
-                        Lists.newArrayList(nvp)));
-    }
-
-    private void updateRelationshipProperty(UpdateIndexedTypePropertyRequest updatePropertyRequest, String propertyName, String relationshipName, String nodeTemplateName) throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        updatePropertyRequest.setPropertyName(propertyName);
-        String json = jsonMapper.writeValueAsString(updatePropertyRequest);
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().postJSon(
-                        "/rest/v1/topologies/" + topologyId + "/nodetemplates/" + nodeTemplateName + "/relationships/" + relationshipName + "/updateProperty",
-                        json));
-    }
-
-    @When("^I update the \"([^\"]*)\" property of the relationship \"([^\"]*)\" into \"([^\"]*)\" from the node template \"([^\"]*)\"$")
-    public void I_update_the_property_of_the_relationship_into_from_the_node_template(String propertyName, String relationshipName, String newValue,
-                                                                                      String nodeTemplateName) throws Throwable {
-        UpdateIndexedTypePropertyRequest updatePropertyRequest = new UpdateIndexedTypePropertyRequest();
-        updatePropertyRequest.setPropertyValue(newValue);
-        updatePropertyRequest.setType("tosca.relationships.HostedOn");
-        updateRelationshipProperty(updatePropertyRequest, propertyName, relationshipName, nodeTemplateName);
-    }
-
-    @When("^I update the \"([^\"]*)\" complex property of the relationship \"([^\"]*)\" into \\\"\\\"\\\"(.*?)\\\"\\\"\\\" from the node template \"([^\"]*)\"$")
-    public void I_update_the_complex_property_of_the_relationship_into_from_the_node_template(String propertyName, String relationshipName, String newValue,
-                                                                                              String nodeTemplateName) throws Throwable {
-        UpdateIndexedTypePropertyRequest updatePropertyRequest = new UpdateIndexedTypePropertyRequest();
-        updatePropertyRequest.setPropertyValue(JsonUtil.toMap(newValue));
-        updatePropertyRequest.setType("tosca.relationships.RoutesTo");
-        updateRelationshipProperty(updatePropertyRequest, propertyName, relationshipName, nodeTemplateName);
-    }
-
     @And("^The topology should have as dependencies$")
     public void The_topology_should_have_as_dependencies(DataTable dependencies) throws Throwable {
         Set<CSARDependency> expectedDependencies = Sets.newHashSet();
@@ -730,95 +554,9 @@ public class TopologyStepDefinitions {
         Assert.assertEquals(expectedDependencies, actualDependencies);
     }
 
-    @And("^If I search for topology templates I can find one with the name \"([^\"]*)\" and store the related topology as a SPEL context$")
-    public void searchForTopologyTemplateByName(String topologyTemplateName) throws Throwable {
-        String topologyId = getTopologyIdFromTemplateName(topologyTemplateName, null);
-        assertNotNull("A topology template named " + topologyTemplateName + " can not be found", topologyId);
-        String response = Context.getRestClientInstance().get("/rest/v1/topologies/" + topologyId);
-        RestResponse<TopologyDTO> topologyDto = JsonUtil.read(response, TopologyDTO.class, Context.getJsonMapper());
-        Context.getInstance().buildEvaluationContext(topologyDto.getData().getTopology());
-    }
-
-    @And("^If I search for topology templates I can find one with the name \"([^\"]*)\" version \"([^\"]*)\" and store the related topology as a SPEL context$")
-    public void searchForTopologyTemplateByName(String topologyTemplateName, String topologyTemplateVersion) throws Throwable {
-        String topologyId = getTopologyIdFromTemplateName(topologyTemplateName, topologyTemplateVersion);
-        assertNotNull("A topology template named " + topologyTemplateName + " can not be found", topologyId);
-        Context.getInstance().registerTopologyId(topologyId);
-        String response = Context.getRestClientInstance().get("/rest/v1/topologies/" + topologyId);
-        RestResponse<TopologyDTO> topologyDto = JsonUtil.read(response, TopologyDTO.class, Context.getJsonMapper());
-        Context.getInstance().buildEvaluationContext(topologyDto.getData().getTopology());
-    }
-
-    private String getTopologyIdFromTemplateName(String topologyTemplateName, String topologyTemplateVersion) throws Throwable {
-        String response = Context.getRestClientInstance().postJSon("/rest/v1/templates/topology/search", "{\"from\":0,\"size\":50}");
-        RestResponse<FacetedSearchResult> restResponse = JsonUtil.read(response, FacetedSearchResult.class);
-        String topologyTemplateId = null;
-        for (Object singleResult : restResponse.getData().getData()) {
-            Map map = (Map) singleResult;
-            if (topologyTemplateName.equals(map.get("name"))) {
-                topologyTemplateId = map.get("id").toString();
-            }
-        }
-        assertNotNull(topologyTemplateId);
-        if (topologyTemplateVersion != null) {
-            SearchRequest searchRequest = new SearchRequest();
-            searchRequest.setQuery(topologyTemplateVersion);
-            searchRequest.setFrom(0);
-            searchRequest.setSize(Integer.MAX_VALUE);
-            String templateVersionJson = Context.getRestClientInstance().postJSon("/rest/v1/templates/" + topologyTemplateId + "/versions/search",
-                    JsonUtil.toString(searchRequest));
-            GetMultipleDataResult<?> result = JsonUtil.read(templateVersionJson, GetMultipleDataResult.class).getData();
-            assertNotNull(result);
-            assertEquals(1, result.getTotalResults());
-            Map<?, ?> ttv = (Map) result.getData()[0];
-            assertNotNull(ttv);
-            assertTrue(ttv.containsKey("topologyId"));
-            return ttv.get("topologyId").toString();
-        } else {
-            // get the last known version of topology for this template
-            String templateVersionJson = Context.getRestClientInstance().get("/rest/v1/templates/" + topologyTemplateId + "/versions/");
-            TopologyTemplateVersion ttv = JsonUtil.read(templateVersionJson, TopologyTemplateVersion.class).getData();
-            assertNotNull(ttv);
-            assertNotNull(ttv.getTopologyId());
-            return ttv.getTopologyId();
-        }
-    }
-
-    @And("^I export the YAML from topology template named \"([^\"]*)\" and build a test dataset named \"([^\"]*)\"$")
-    public void exportTopologyYamlAndAddItInTestData(String topologyTemplateName, String testDataName) throws Throwable {
-        exportTopologyYamlAndAddItInTestDataReplacingVersion(topologyTemplateName, testDataName, null, null);
-    }
-
-    @Given("^I export the YAML from topology template named \"([^\"]*)\" and build a test dataset named \"([^\"]*)\" changing the version from \"([^\"]*)\" to \"([^\"]*)\"$")
-    public void exportTopologyYamlAndAddItInTestDataReplacingVersion(String topologyTemplateName, String testDataName, String oldVersion, String newVersion)
-            throws Throwable {
-        String topologyId = getTopologyIdFromTemplateName(topologyTemplateName, null);
-        assertNotNull("A topology template named " + topologyTemplateName + " can not be found", topologyId);
-        String response = Context.getRestClientInstance().get("/rest/v1/topologies/" + topologyId + "/yaml");
-        RestResponse<String> restResponse = JsonUtil.read(response, String.class, Context.getJsonMapper());
-        String yaml = restResponse.getData();
-        if (oldVersion != null && newVersion != null) {
-            yaml = Strings.replace(yaml, "template_version: " + oldVersion, "template_version: " + newVersion);
-        }
-        Path dir = Files.createTempDirectory("yamlTopo");
-        Path filePath = Files.createFile(Paths.get(dir.toAbsolutePath() + File.separator + "service-template.yaml"));
-        FileUtils.writeStringToFile(filePath.toFile(), yaml);
-        Path csarPath = TestDataRegistry.IT_ARTIFACTS_DIR.resolve(testDataName + ".csar");
-        FileUtil.zip(dir, csarPath);
-        FileUtil.delete(dir);
-        TestDataRegistry.TEST_ARTIFACTS.put(testDataName, csarPath);
-    }
-
-    @When("^I add the node \"([^\"]*)\" to the group \"([^\"]*)\"$")
-    public void I_add_the_node_to_the_group(String nodeName, String groupName) throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().postUrlEncoded("/rest/v1/topologies/" + topologyId + "/nodeGroups/" + groupName + "/members/" + nodeName,
-                        Lists.<NameValuePair>newArrayList()));
-    }
-
     @And("^The RestResponse should contain a group named \"([^\"]*)\" whose members are \"([^\"]*)\" and policy is \"([^\"]*)\"$")
-    public void The_RestResponse_should_contain_a_group_named_whose_members_are_and_policy_is(String groupName, String members, String policy) throws Throwable {
+    public void The_RestResponse_should_contain_a_group_named_whose_members_are_and_policy_is(String groupName, String members, String policy)
+            throws Throwable {
         String topologyResponseText = Context.getInstance().getRestResponse();
         RestResponse<TopologyDTO> topologyResponse = JsonUtil.read(topologyResponseText, TopologyDTO.class, Context.getJsonMapper());
         Assert.assertNotNull(topologyResponse.getData().getTopology().getGroups());
@@ -834,41 +572,12 @@ public class TopologyStepDefinitions {
         }
     }
 
-    @When("^I remove the node \"([^\"]*)\" from the group \"([^\"]*)\"$")
-    public void I_remove_the_node_from_the_group(String nodeName, String groupName) throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().delete("/rest/v1/topologies/" + topologyId + "/nodeGroups/" + groupName + "/members/" + nodeName));
-    }
-
-    @When("^I remove the group \"([^\"]*)\"$")
-    public void I_remove_the_group(String groupName) throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        Context.getInstance().registerRestResponse(Context.getRestClientInstance().delete("/rest/v1/topologies/" + topologyId + "/nodeGroups/" + groupName));
-    }
-
     @Then("^The RestResponse should not contain any group$")
     public void The_RestResponse_should_not_contain_any_group() throws Throwable {
         String topologyResponseText = Context.getInstance().getRestResponse();
         RestResponse<TopologyDTO> topologyResponse = JsonUtil.read(topologyResponseText, TopologyDTO.class, Context.getJsonMapper());
         Map<String, NodeGroup> groups = topologyResponse.getData().getTopology().getGroups();
         Assert.assertTrue(groups == null || groups.isEmpty());
-    }
-
-    @When("^I update the name of the group \"([^\"]*)\" to \"([^\"]*)\"$")
-    public void I_update_the_name_of_the_group_to(String groupName, String newGroupName) throws Throwable {
-        String topologyId = Context.getInstance().getTopologyId();
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().putUrlEncoded("/rest/v1/topologies/" + topologyId + "/nodeGroups/" + groupName,
-                        Lists.<NameValuePair>newArrayList(new BasicNameValuePair("newName", newGroupName))));
-    }
-
-    @And("^I add a group with name \"([^\"]*)\" whose members are \"([^\"]*)\"$")
-    public void I_add_a_group_with_name_whose_members_are(String groupName, String memberText) throws Throwable {
-        Set<String> members = Sets.newHashSet(memberText.split(","));
-        for (String member : members) {
-            I_add_the_node_to_the_group(member, groupName);
-        }
     }
 
     @And("^The topology should have scalability policy error concerning \"([^\"]*)\"$")
@@ -885,20 +594,42 @@ public class TopologyStepDefinitions {
         }
     }
 
-    @When("^I reset the the node template \"([^\"]*)\"'s property \"([^\"]*)\"$")
-    public void I_reset_the_the_node_template_s_property(String nodeTempName, String propertyName) throws Throwable {
-
-        String topologyId = Context.getInstance().getTopologyId();
-        // reset a property value = update it's value to null
-        UpdatePropertyRequest req = new UpdatePropertyRequest(propertyName, null);
-        String json = jsonMapper.writeValueAsString(req);
-        Context.getInstance().registerRestResponse(
-                Context.getRestClientInstance().postJSon("/rest/v1/topologies/" + topologyId + "/nodetemplates/" + nodeTempName + "/properties", json));
-
+    private boolean missingArtifactsContain(List<AbstractTask> taskList, String nodeName, String artifactName) {
+        for (AbstractTask task : taskList) {
+            if (task instanceof ArtifactTask) {
+                ArtifactTask artifactTask = (ArtifactTask) task;
+                if (artifactTask.getArtifactName().equals(artifactName) && artifactTask.getNodeTemplateName().equals(nodeName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
-    @Given("^I update the node template \"([^\"]*)\"'s complex property \"([^\"]*)\" to \"\"\"(.*?)\"\"\"$")
-    public void iUpdateTheNodeTemplateSComplexPropertyToSimpleReallySimpleInAComplexOne(String nodeName, String propertyName, String newValue) throws Throwable {
-        updateNodeTemplateProperty(nodeName, propertyName, JsonUtil.toMap(newValue));
+    @And("^the nodes with missing artifacts should be$")
+    public void theNodesWithMissingArtifactsShouldBe(DataTable expectedMissingArtifacts) throws Throwable {
+        RestResponse<TopologyValidationResult> restResponse = JsonUtil.read(Context.getInstance().getRestResponse(), TopologyValidationResult.class,
+                Context.getJsonMapper());
+        assertNotNull(restResponse.getData());
+        List<AbstractTask> taskList = restResponse.getData().getTaskList();
+        for (List<String> expected : expectedMissingArtifacts.raw()) {
+            assertTrue("Task list does not contain [" + expected.get(0) + " , " + expected.get(1) + "]",
+                    missingArtifactsContain(taskList, expected.get(0), expected.get(1)));
+        }
     }
+
+    @And("^The registered topology should not exist$")
+    public void theRegisteredTopologyShouldNotExist() throws Throwable {
+        Context.getInstance().registerRestResponse(Context.getRestClientInstance().get("/rest/v1/catalog/topologies/" + Context.getInstance().getTopologyId()));
+        commonStepDefinitions.I_should_receive_a_RestResponse_with_an_error_code(504);
+    }
+
+    @Then("^the topology named \"([^\"]*)\" should have (\\d+) versions$")
+    public void theTopologyNamedShouldHaveVersions(String name, int expectedVersionCount) throws Throwable {
+        String responseString = Context.getRestClientInstance().get("/rest/v1/catalog/topologies/" + name + "/versions");
+        RestResponse<?> response = JsonUtil.read(responseString);
+        List<CatalogVersionResult> versionResults = JsonUtil.toList(JsonUtil.toString(response.getData()), CatalogVersionResult.class);
+        assertEquals(expectedVersionCount, versionResults.size());
+    }
+
 }

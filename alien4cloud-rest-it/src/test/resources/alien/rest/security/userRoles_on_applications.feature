@@ -1,8 +1,9 @@
-Feature: Create an application an testing application roles on it
+Feature: Testing user roles on application
 
   Background:
     Given I am authenticated with "APPLICATIONS_MANAGER" role
-    And I create a new application with name "mordor" and description "Bad region for hobbits." without errors
+    And I create an application with name "mordor", archive name "mordor", description "Bad region for hobbits." and topology template id "null"
+    And I should receive a RestResponse with no error
 
   @reset
   Scenario: I can't read an application if i have no application role on it
@@ -12,7 +13,6 @@ Feature: Create an application an testing application roles on it
 
   @reset
   Scenario: I can read an application with at least one application role on it - APPLICATION_MANAGER
-    #Given I add a role "APPLICATION_MANAGER" to user "appManager" on the application "mordor"
     Given I add a role "APPLICATION_MANAGER" to user "appManager" on the resource type "APPLICATION" named "mordor"
     And I am authenticated with "APP_MANAGER" role
     And I retrieve the newly created application
@@ -20,7 +20,6 @@ Feature: Create an application an testing application roles on it
 
   @reset
   Scenario: I can read an application with at least one application role on it - APPLICATION_DEVOPS
-    #Given I add a role "APPLICATION_DEVOPS" to user "appManager" on the application "mordor"
     Given I add a role "APPLICATION_DEVOPS" to user "appManager" on the resource type "APPLICATION" named "mordor"
     And I am authenticated with "APP_MANAGER" role
     And I retrieve the newly created application

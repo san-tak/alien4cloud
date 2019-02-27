@@ -21,9 +21,9 @@ public interface IPaaSProvider {
      * This method is called by Alien in order to restore the state of the paaS provider after a restart.
      * The provider must implement this method in order to restore its state
      *
-     * @param activeDeployments the currently active deployments that Alien has
+     * @param activeDeployments a map of passDeploymentId -> deploymentId (active deployments).
      */
-    void init(Map<String, PaaSTopologyDeploymentContext> activeDeployments);
+    void init(Map<String, String> activeDeployments);
 
     /**
      * Deploy a topology
@@ -31,6 +31,13 @@ public interface IPaaSProvider {
      * @param deploymentContext the context of the deployment
      */
     void deploy(PaaSTopologyDeploymentContext deploymentContext, IPaaSCallback<?> callback);
+
+    /**
+     * Update a topology deployment.
+     *
+     * @param deploymentContext the context of the deployment
+     */
+    void update(PaaSTopologyDeploymentContext deploymentContext, IPaaSCallback<?> callback);
 
     /**
      * Undeploy a given topology.
@@ -54,8 +61,9 @@ public interface IPaaSProvider {
      * @param deploymentContext the deployment context
      * @param workflowName the workflow to launch
      * @param inputs the workflow params
+     * @param callback the callback should be used to return the corresponding executionId
      */
-    void launchWorkflow(PaaSDeploymentContext deploymentContext, String workflowName, Map<String, Object> inputs, IPaaSCallback<?> callback);
+    void launchWorkflow(PaaSDeploymentContext deploymentContext, String workflowName, Map<String, Object> inputs, IPaaSCallback<String> callback);
 
     /**
      * Get status of a deployment

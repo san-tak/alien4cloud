@@ -5,8 +5,8 @@ define(function(require) {
   var states = require('states');
   var _ = require('lodash');
 
-  modules.get('a4c-auth', ['ngResource']).factory('authService', ['$resource', '$state', '$http',
-    function($resource, $state, $http) {
+  modules.get('a4c-auth', ['ngResource']).factory('authService', ['$resource', '$location', '$state', '$http',
+    function($resource, $location, $state, $http) {
       var userStatusResource = $resource('rest/latest/auth/status', {}, {
         'query': {
           method: 'GET',
@@ -87,7 +87,7 @@ define(function(require) {
 
         getRolesForResource: function(resource, userStatus) {
           var allRoles;
-          var userRoles = resource.userRoles[userStatus.username];
+          var userRoles = _.get(resource, 'userRoles["' + userStatus.username + '"]', []);
           if (!_.isEmpty(userRoles)) {
             allRoles = userRoles;
           }
@@ -134,13 +134,8 @@ define(function(require) {
          * LogOut and redirect to home.
          */
         logOut: function() {
-          var self = this;
-          $http.post('logout').success(function() {
-            self.currentStatus = userStatusResource.query();
-            $state.go('home', {}, {
-              reload: true
-            });
-          });
+          this.currentStatus = null;
+          window.location.href = '/logout';
         },
         /**
          * Login and redirect to target
@@ -151,7 +146,7 @@ define(function(require) {
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded'
             }
-          }).success(function() {
+          }).then(function() {
             self.currentStatus = userStatusResource.query(function(loginResult) {
               // get the new status from server
               if (loginResult.data.isLogged === false) {
@@ -170,7 +165,7 @@ define(function(require) {
             });
 
             return self.currentStatus;
-          }).error(function() {
+          }).catch(function() {
             self.currentStatus = {
               'data': {
                 'isLogged': false

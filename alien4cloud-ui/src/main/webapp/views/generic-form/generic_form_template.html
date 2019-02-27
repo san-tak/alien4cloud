@@ -1,14 +1,14 @@
 <div class="form-horizontal" role="form">
-  <div class="panel panel-default form-panel">
-    <div class="panel-heading">
+  <div ng-class="{'panel panel-default form-panel': formTitle}">
+    <div ng-if="formTitle" class="panel-heading">
       <h4 style="display: inline;">{{formTitle | translate}} </h4>
       <button id="deleteGenericFormButton" type="button" class="btn btn-danger btn-xs" ng-click="deleteData()"
-              ng-if="isRemovable && automaticSave" tooltip="{{ 'GENERIC_FORM.DELETE' | translate }}"><i
+              ng-if="isRemovable && automaticSave" uib-tooltip="{{ 'GENERIC_FORM.DELETE' | translate }}"><i
           class="fa fa-trash-o"></i></button>
       <button id="closeGenericFormButton" type="button" class="close" ng-click="cancelForm()" aria-hidden="true"
               ng-if="isCancelable && automaticSave">&times;</button>
     </div>
-    <div class="panel-body">
+    <div ng-class="{'panel-body': formTitle}">
       <div class="row" ng-if="showPath">
         <div class="col-md-12">
           <ol class="breadcrumb">
@@ -49,7 +49,7 @@
                   ng-click="activePathChangeTo(-1)">{{ rootName | translate }}</span>
               </div>
             </div>
-            <div collapse="isCollapsed">
+            <div uib-collapse="isCollapsed">
               <div class="form-tree-level treecontainer"></div>
             </div>
           </div>
@@ -61,7 +61,7 @@
                  'form-container-no-tree form-container-horizontal-scroll': configuration.formStyle === 'window',
                  'well form-container-with-tree form-container-scroll': configuration.formStyle === 'tree',
                  '{{formClass}}': configuration.formStyle === 'tree' && formClass,
-                 'well': configuration.formStyle === 'tree' && showTree
+                 'form-with-title': formTitle
                }">
             <!-- The root form -->
             <div class="genericformpropertiescontainer"
@@ -78,15 +78,13 @@
       <div class="form-group" ng-if="!isReadOnly && !automaticSave">
         <div class="text-center">
           <button type="button" class="btn btn-primary" ng-click="saveAction(rootObject)">{{
-            'GENERIC_FORM.SAVE' | translate }}
+            (saveLabel || 'GENERIC_FORM.SAVE') | translate }}
           </button>
           <button type="button" class="btn btn-default" ng-click="cancelForm()" ng-if="isCancelable">{{
-            'GENERIC_FORM.CANCEL' |
+            (cancelLabel || 'GENERIC_FORM.CANCEL') |
             translate }}
           </button>
-          <button type="button" class="btn btn-danger" ng-click="deleteData()" ng-if="isRemovable">{{
-            'GENERIC_FORM.DELETE' | translate }}
-          </button>
+          <delete-confirm ng-if="isRemovable" func="deleteData()" position="right" fastyle="fa-trash-o" text="{{'GENERIC_FORM.DELETE' | translate }}"></delete-confirm>
         </div>
       </div>
     </div>

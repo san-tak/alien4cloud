@@ -4,17 +4,6 @@ define(function (require) {
   var modules = require('modules');
 
   modules.get('a4c-components', ['ngResource']).factory('csarService', ['$resource', '$translate', function($resource, $translate) {
-    var nodeTypeCreateDAO = $resource('rest/latest/csars/:csarId/nodetypes/', {}, {
-      'upload': {
-        method: 'POST',
-        isArray: false,
-        headers: {
-          'Content-Type': 'application/json; charset=UTF-8'
-        }
-      }
-    });
-
-    var nodeTypeCRUDDAO = $resource('rest/latest/csars/:csarId/nodetypes/:nodeTypeId', {}, {});
 
     var resultGetAndDelete = $resource('rest/latest/csars/:csarId', {
       csarId: '@csarId'
@@ -45,25 +34,22 @@ define(function (require) {
 
     // Prepare result html for toaster message
     var builtResultList = function builtResultList(resultObject) {
-      var resourtceList;
+      var resourceList;
       if (resultObject.error) {
         var baseResponse = $translate.instant('CSAR.ERRORS.' + resultObject.error.code);
-        resourtceList = baseResponse + ' : <ul>';
+        resourceList = baseResponse + ' : <ul>';
         resultObject.data.forEach(function getResource(resource) {
-          resourtceList += '<li>';
-          resourtceList += resource.resourceName + ' (' + resource.resourceType + ')';
-          resourtceList += '</li>';
+          resourceList += '<li>';
+          resourceList += resource.resourceName + ' (' + resource.resourceType + ')';
+          resourceList += '</li>';
         });
       }
-      return resourtceList;
+      return resourceList;
     };
-
 
     return {
       'getAndDeleteCsar': resultGetAndDelete,
       'searchCsar': searchCsar,
-      'createNodeType': nodeTypeCreateDAO,
-      'nodeTypeCRUDDAO': nodeTypeCRUDDAO,
       'builtErrorResultList': builtResultList
     };
   }]);

@@ -1,15 +1,5 @@
 package alien4cloud.csar.services;
 
-import java.util.List;
-import java.util.UUID;
-
-import javax.annotation.Resource;
-
-import org.elasticsearch.index.query.QueryBuilders;
-import org.springframework.stereotype.Service;
-
-import com.google.common.base.Strings;
-
 import alien4cloud.dao.IGenericSearchDAO;
 import alien4cloud.dao.model.GetMultipleDataResult;
 import alien4cloud.exception.AlreadyExistException;
@@ -18,15 +8,26 @@ import alien4cloud.exception.NotFoundException;
 import alien4cloud.model.git.CsarGitCheckoutLocation;
 import alien4cloud.model.git.CsarGitRepository;
 import alien4cloud.utils.UrlUtil;
+import com.google.common.base.Strings;
+import lombok.extern.slf4j.Slf4j;
+import org.elasticsearch.index.query.QueryBuilders;
+import org.springframework.stereotype.Service;
+
+import javax.annotation.Resource;
+import java.util.List;
+import java.util.UUID;
 
 /**
  * Manages operations on a CsarGitRepository
  */
+@Slf4j
 @Service
 public class CsarGitRepositoryService {
     private static final String URL_FIELD = "repositoryUrl";
     @Resource(name = "alien-es-dao")
     private IGenericSearchDAO alienDAO;
+
+    private static final String forbiddenSubPathCharacter = "*";
 
     /**
      * Create a CsarGitRepository in the system to store its informations
@@ -39,10 +40,9 @@ public class CsarGitRepositoryService {
      * @return The auto-generated id of the CsarGitRepository object
      */
     public String create(String repositoryUrl, String username, String password, List<CsarGitCheckoutLocation> importLocations, boolean isStoredLocally) {
-        validatesRepositoryUrl(repositoryUrl, null);
-        if (importLocations.isEmpty()) {
-            throw new InvalidArgumentException("Import locations cannot be empty.");
-        }
+        validatesRepositoryUrl(repositoryUrl);
+        failIfExists(repositoryUrl);
+        validatesImportLocations(importLocations);
         // create it
         CsarGitRepository csarGit = new CsarGitRepository();
         csarGit.setId(UUID.randomUUID().toString());
@@ -55,16 +55,28 @@ public class CsarGitRepositoryService {
         return csarGit.getId();
     }
 
-    private void validatesRepositoryUrl(String repositoryUrl, String id) {
+    private void validatesImportLocations(List<CsarGitCheckoutLocation> importLocations) {
+        if (importLocations.isEmpty()) {
+            throw new InvalidArgumentException("Import locations cannot be empty.");
+        }
+        importLocations.stream().forEachOrdered(location -> {
+            if (forbiddenSubPathCharacter.equals(location.getSubPath())) {
+                location.setSubPath(null);
+                log.debug("The path file cannot be the special character : <" + forbiddenSubPathCharacter + ">. All files will be imported.");
+            }
+        });
+    }
+
+    private void validatesRepositoryUrl(String repositoryUrl) {
         // check if the repository url has a valid format
         if (!UrlUtil.isValid(repositoryUrl)) {
             throw new InvalidArgumentException("Repository url <" + repositoryUrl + "> is not a valid url.");
         }
-        // and that the repository doesn't already exists
+    }
+
+    private void failIfExists(String repositoryUrl) {
         CsarGitRepository existingCsarGitRepository = alienDAO.customFind(CsarGitRepository.class, QueryBuilders.termQuery(URL_FIELD, repositoryUrl));
-        if (existingCsarGitRepository == null) {
-            return;
-        } else if (id == null || !id.equals(existingCsarGitRepository.getId())) {
+        if (existingCsarGitRepository != null) {
             throw new AlreadyExistException("A repository with url <" + repositoryUrl + "> already exists in alien 4 cloud.");
         }
     }
@@ -107,9 +119,12 @@ public class CsarGitRepositoryService {
      */
     public void update(String id, String repositoryUrl, String username, String password, List<CsarGitCheckoutLocation> importLocations,
             boolean isStoredLocally) {
-        validatesRepositoryUrl(repositoryUrl, id);
+        validatesRepositoryUrl(repositoryUrl);
         CsarGitRepository repositoryToUpdate = getOrFail(id);
-        repositoryToUpdate.setRepositoryUrl(repositoryUrl);
+        if (!repositoryToUpdate.getRepositoryUrl().equals(repositoryUrl)) {
+            failIfExists(repositoryUrl);
+            repositoryToUpdate.setRepositoryUrl(repositoryUrl);
+        }
         if (username != null) {
             repositoryToUpdate.setUsername(username);
         }
@@ -124,6 +139,10 @@ public class CsarGitRepositoryService {
             if (existingLocation != null) {
                 location.setLastImportedHash(existingLocation.getLastImportedHash());
             }
+            if (forbiddenSubPathCharacter.equals(location.getSubPath())) {
+                location.setSubPath(null);
+                log.debug("The path file cannot be the special character : <" + forbiddenSubPathCharacter + ">. All files will be imported.");
+            }
         }
         repositoryToUpdate.setImportLocations(importLocations);
 
@@ -133,8 +152,8 @@ public class CsarGitRepositoryService {
     private CsarGitCheckoutLocation findLocationIn(CsarGitCheckoutLocation location, List<CsarGitCheckoutLocation> importLocations) {
         for (CsarGitCheckoutLocation givenLocation : importLocations) {
             if (givenLocation.getBranchId().equals(location.getBranchId())
-                    && ((Strings.isNullOrEmpty(givenLocation.getSubPath()) && Strings.isNullOrEmpty(location.getSubPath())) || (!Strings
-                            .isNullOrEmpty(givenLocation.getSubPath()) && givenLocation.getSubPath().equals(location.getSubPath())))) {
+                    && ((Strings.isNullOrEmpty(givenLocation.getSubPath()) && Strings.isNullOrEmpty(location.getSubPath()))
+                            || (!Strings.isNullOrEmpty(givenLocation.getSubPath()) && givenLocation.getSubPath().equals(location.getSubPath())))) {
                 return givenLocation;
             }
         }

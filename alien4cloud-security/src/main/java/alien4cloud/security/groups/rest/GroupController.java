@@ -6,29 +6,36 @@ import java.util.List;
 import javax.annotation.Resource;
 import javax.validation.Valid;
 
-import lombok.extern.slf4j.Slf4j;
-
 import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RestController;
 
-import alien4cloud.Constants;
 import alien4cloud.audit.annotation.Audit;
 import alien4cloud.dao.model.GetMultipleDataResult;
 import alien4cloud.exception.InvalidArgumentException;
-import alien4cloud.rest.model.*;
+import alien4cloud.rest.model.FilteredSearchRequest;
+import alien4cloud.rest.model.RestErrorBuilder;
+import alien4cloud.rest.model.RestErrorCode;
+import alien4cloud.rest.model.RestResponse;
+import alien4cloud.rest.model.RestResponseBuilder;
 import alien4cloud.security.ResourceRoleService;
 import alien4cloud.security.groups.GroupService;
 import alien4cloud.security.groups.IAlienGroupDao;
 import alien4cloud.security.model.Group;
 import alien4cloud.security.model.User;
+import alien4cloud.utils.AlienConstants;
 import io.swagger.annotations.ApiOperation;
+import lombok.extern.slf4j.Slf4j;
 
 
 /**
  * GroupController allows ALIEN administrators to create, delete, update, or
- * search groups. A default internal group is created to make some security
- * check easier ({@link Constants}) Event ADMIN role can't make CRUD operation
+ * search groups. A default internal group ({@link AlienConstants#GROUP_NAME_ALL_USERS}) is created to make some security
+ * check easier. Event ADMIN role can't make CRUD operation
  * on this Group
  * 
  * @author igor ngouagna
@@ -67,7 +74,7 @@ public class GroupController {
         if (!isInternalAllUserGroup(groupId)) {
             groupService.updateGroup(groupId, groupUpdateRequest);
         } else {
-            log.info("You can not update the group with id <{}> corresponding to an internal group <{}>", groupId, Constants.GROUP_NAME_ALL_USERS);
+            log.info("You can not update the group with id [ {} ] corresponding to an internal group [ {} ]", groupId, AlienConstants.GROUP_NAME_ALL_USERS);
             return RestResponseBuilder
                     .<Void> builder()
                     .data(null)
@@ -75,7 +82,9 @@ public class GroupController {
                             .builder(RestErrorCode.INTERNAL_OBJECT_ERROR)
                             .message(
                                     "You can not update the group with id <" + groupId + "> corresponding to an internal group <"
-                                            + Constants.GROUP_NAME_ALL_USERS + ">").build()).build();
+                                            + AlienConstants.GROUP_NAME_ALL_USERS + ">")
+                            .build())
+                    .build();
         }
         return RestResponseBuilder.<Void> builder().build();
     }
@@ -118,11 +127,8 @@ public class GroupController {
         }
         if (!isInternalAllUserGroup(groupId)) {
             groupService.deleteGroup(groupId);
-            // Delete group references in other models implementing
-            // ISecuredResource
-            resourceRoleService.deleteGroupRoles(groupId);
         } else {
-            log.info("You can not update the group with id <{}> corresponding to an internal group <{}>", groupId, Constants.GROUP_NAME_ALL_USERS);
+            log.info("You can not update the group with id [ {} ] corresponding to an internal group [ {} ]", groupId, AlienConstants.GROUP_NAME_ALL_USERS);
             return RestResponseBuilder
                     .<Void> builder()
                     .data(null)
@@ -130,7 +136,9 @@ public class GroupController {
                             .builder(RestErrorCode.INTERNAL_OBJECT_ERROR)
                             .message(
                                     "You can not update the group with id <" + groupId + "> corresponding to an internal group <"
-                                            + Constants.GROUP_NAME_ALL_USERS + ">").build()).build();
+                                            + AlienConstants.GROUP_NAME_ALL_USERS + ">")
+                            .build())
+                    .build();
         }
         return RestResponseBuilder.<Void> builder().build();
     }
@@ -232,7 +240,7 @@ public class GroupController {
         if (!isInternalAllUserGroup(groupId)) {
             user = groupService.addUserToGroup(username, groupId);
         } else {
-            log.info("You can not update the group with id <{}> corresponding to an internal group <{}>", groupId, Constants.GROUP_NAME_ALL_USERS);
+            log.info("You can not update the group with id [ {} ] corresponding to an internal group [ {} ]", groupId, AlienConstants.GROUP_NAME_ALL_USERS);
             return RestResponseBuilder
                     .<User> builder()
                     .data(null)
@@ -240,7 +248,9 @@ public class GroupController {
                             .builder(RestErrorCode.INTERNAL_OBJECT_ERROR)
                             .message(
                                     "You can not update the group with id <" + groupId + "> corresponding to an internal group <"
-                                            + Constants.GROUP_NAME_ALL_USERS + ">").build()).build();
+                                            + AlienConstants.GROUP_NAME_ALL_USERS + ">")
+                            .build())
+                    .build();
         }
         return RestResponseBuilder.<User> builder().data(user).build();
     }
@@ -266,7 +276,7 @@ public class GroupController {
         if (!isInternalAllUserGroup(groupId)) {
             user = groupService.removeUserFromGroup(username, groupId);
         } else {
-            log.info("You can not update the group with id <{}> corresponding to an internal group <{}>", groupId, Constants.GROUP_NAME_ALL_USERS);
+            log.info("You can not update the group with id [ {} ] corresponding to an internal group [ {} ]", groupId, AlienConstants.GROUP_NAME_ALL_USERS);
             return RestResponseBuilder
                     .<User> builder()
                     .data(null)
@@ -274,7 +284,9 @@ public class GroupController {
                             .builder(RestErrorCode.INTERNAL_OBJECT_ERROR)
                             .message(
                                     "You can not update the group with id <" + groupId + "> corresponding to an internal group <"
-                                            + Constants.GROUP_NAME_ALL_USERS + ">").build()).build();
+                                            + AlienConstants.GROUP_NAME_ALL_USERS + ">")
+                            .build())
+                    .build();
         }
         return RestResponseBuilder.<User> builder().data(user).build();
     }
@@ -288,6 +300,6 @@ public class GroupController {
      */
     private boolean isInternalAllUserGroup(String groupId) {
         Group group = alienGroupDao.find(groupId);
-        return group != null && Constants.GROUP_NAME_ALL_USERS.equals(group.getName());
+        return group != null && AlienConstants.GROUP_NAME_ALL_USERS.equals(group.getName());
     }
 }
